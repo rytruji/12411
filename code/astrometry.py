@@ -4,8 +4,6 @@ Created 09/01/2026 by truji@mit.edu
 a collection of functions for detecting background stars and performing plate fits
 '''
 
-__name__="astrometry"
-
 ######################################################################################
 #------------------------------------------------------------------------------------#
 ######################################################################################
@@ -16,6 +14,7 @@ from astropy.io import fits as f
 from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
 from astropy.modeling import models, fitting
+from astropy.table import Table
 import astropy.units as u
 
 from astroquery.jplhorizons import Horizons
@@ -36,15 +35,17 @@ from tqdm import tqdm
 ######################################################################################
 
 class observation():
-    def __init__(self, dir, sigma=10, fwhm=10, verbose=True):
+    def __init__(self, dir, sigma=10, fwhm=10, verbose=False):
         self.dir = dir
-        self.hdul = f.open(dir)
+        self.hdul = f.open(self.dir)
         self.data = self.hdul[0].data
         self.header = self.hdul[0].header
 
         self.sigma=sigma
         self.fwhm=fwhm
         self.verbose=verbose
+
+        self.success = True
 
     def get_data(self):
         '''
@@ -60,6 +61,12 @@ class observation():
         Sets self.wcs to the given WCS.
         '''
         self.wcs = WCS(wcs)
+
+    def set_corr(self, corr):
+        '''
+        Sets self.corr to the given .corr.
+        '''
+        self.corr = Table.read(corr)
     
     def extract_from_aperture(self, coords, rad):
         '''
@@ -94,7 +101,7 @@ class observation():
         '''
 
         # calculate sigma_clipped_stats to get rough background stats with significant pixels clipped
-        if self.verbose: print("Calculating obervation statistics...")
+        if self.verbose: print("\n\nCalculating obervation statistics...")
         mean, median, std = sigma_clipped_stats(self.data, sigma=3.0)
         if self.verbose: print(f"Observation statistics:\nMean = {mean}\nMedian = {median}\nStd = {std}\n\nRunning daofind...")
 
@@ -146,78 +153,34 @@ class observation():
         self.xyls = hdu
         return self.xyls
 
-    def get_ephemeris(ids, header, utc=None):
+    def get_ephemeris(self, ids):
         '''
         Docstring for get_ephemeris
 
-        Given a list of object ids and a FITS header, queries JPL Horizons to produce corresponding ephemerides. Returns:
+        Given a list of object ids, queries JPL Horizons to produce corresponding ephemerides using header time. Returns:
             (1) ephem, dictionary containing id: (SkyCoord, ephemeris) pairs for each target id.
         
         :param ids: list, integers or strings corresponding to object ids.
-        :param header: FITS header for relevant observation.
         :param utc: (optional, default None) Time; if given, overrides header and is used as obstime instead.
         '''
-        if not utc:
-            utc = Time(header.get("DATE-OBS"), scale='utc')
+        utc = Time(self.header.get("DATE-OBS"), scale='utc')
         ephem = {}
         for name in ids:
             obj = Horizons(name, location=810, epochs=[utc])
             tab = obj.ephemerides()
             ra_deg  = float(tab['RA'][0])   # degrees
             dec_deg = float(tab['DEC'][0])  # degrees
-            ephem[name] = [SkyCoord(ra_deg*u.deg, dec_deg*u.deg, frame='icrs'), tab]
+            ephem[name] = SkyCoord(ra_deg*u.deg, dec_deg*u.deg, frame='icrs')
         return ephem
-
-
-
-class astrometry():
-    def __init__(self, astrodir, files=None):
-        self.astrodir = astrodir
-        self.observations = []
-        self.success = []
-
-        if files:
-            self.obsdirs = files
-            self.extend(files)
-            
-    def extend(self, files):
-        format = type(files)
-
-        # test for string, should be path to .fits observation
-        if format not in (list, tuple) and format is str:
-            self.observations.append(observation(files))
-
-            # add to obs paths
-            self.obsdirs.append(files)
+    
+    def fit_poly(self, degree=1):
         
-        # is either invalid or a list
-        for file in files:
-            assert type(file) is str
-            self.observations.append(observation(file))
-        
-        # any other error should be handled by observation class. add to obs paths
-        self.obsdirs += files
-
-    def get_xyls(self, optimize=False):
-        for i, obs in tqdm(enumerate(self.observations), total=len(self.observations), desc="Identifying Sources..."):
-            sources = obs.get_dao()
-            xyls = obs.get_sources_xlys(sources)
-            
-            out_xyls = os.join(self.astrodir, "xyls", f"observation_{i:08d}.xyls")
-            xyls.writeto(out_xyls, overwrite=True)
-
-    def get_solutions(self, xyls=False):
-        xylsdir = os.join(self.astrodir, "xyls", "*.xyls")
-        solveddir = os.join(self.astrodir, "solved")
-        os.system(f'wsl ~ -e sh -c "solve-field {xylsdir} --overwrite --dir {solveddir} --no-plots --scale-units arcsecperpix"')
-
-    def make_poly(self, corr, degree=1):
         # construct x, y, ra, dec positions for all corr stars
-        x_n = np.array(corr["field_x"])
-        y_n = np.array(corr["field_y"])
+        x_n = np.array(self.corr["field_x"])
+        y_n = np.array(self.corr["field_y"])
 
-        ra_n  = np.array(corr["index_ra"])
-        dec_n = np.array(corr["index_dec"])
+        ra_n  = np.array(self.corr["index_ra"])
+        dec_n = np.array(self.corr["index_dec"])
 
         # get image center
         ra0 = self.wcs.wcs.crval[0]
@@ -234,6 +197,120 @@ class astrometry():
 
         self.fit_xi  = fitter(poly_xi, x_n, y_n, xi_n)
         self.fit_eta = fitter(poly_eta, x_n, y_n, eta_n)
+
+    def Gaussean2D_centroid(self, ap):
+        mask = ap.to_mask(method="center")
+        values = mask.cutout(self.data, fill_value=np.nan)
+
+        ny, nx = values.shape
+        yy, xx = np.mgrid[0:ny, 0:nx]
+
+        amp0 = np.nanmax(values)
+        x0 = nx / 2.0
+        y0 = ny / 2.0
+        sigma0 = max(1.0, ap.r / 2.0)
+
+        # beginning assumption: centered in aperture, sigma1 is half aperture radius
+        g_init = models.Gaussian2D(
+            amplitude=amp0,
+            x_mean=x0,
+            y_mean=y0,
+            x_stddev=sigma0,
+            y_stddev=sigma0,
+            theta=0.0,
+        )
+
+        fitter = fitting.LevMarLSQFitter()
+        g_fit = fitter(g_init, xx, yy, values)
+
+        xc = float(g_fit.x_mean.value)
+        yc = float(g_fit.y_mean.value)
+
+        y0, x0 = mask.bbox.iymin, mask.bbox.ixmin
+
+        x_img = x0 + xc
+        y_img = y0 + yc
+
+        params = {name: getattr(g_fit, name).value for name in g_fit.param_names}
+
+        return (x_img, y_img, params)
+    
+
+
+class astrometry():
+    def __init__(self, datadir, resultdir, astrodir, image_names=None):
+
+        basedir = os.path.abspath(".")
+
+        self.datadir = os.path.join(basedir, datadir).replace("\\","/")
+        self.resultdir = os.path.join(basedir, resultdir).replace("\\","/")
+
+        self.astrodir = astrodir
+
+        self.observations = {}
+
+        if image_names:
+            self.extend(image_names)
+            
+    def extend(self, image_names):
+
+        # test for string, should be path to .fits observation
+        if type(image_names) is str:
+            full_path = os.path.join(self.datadir, image_names + ".fits")
+            self.observations[image_names] = observation(full_path)
+        
+        # is either invalid or a list
+        else:
+            for name in image_names:
+                full_path = os.path.join(self.datadir, name + ".fits")
+                self.observations[name] = observation(full_path)
+
+    def get_xyls(self, optimize=False):
+        for name, obs in tqdm(self.observations.items(), total=len(self.observations), desc="Identifying Sources"):
+            sources = obs.get_dao()
+            xyls = obs.get_sources_xyls(sources)
+            
+            out_xyls = os.path.join(self.resultdir, "xyls", f"{name}.xyls")
+            os.makedirs(os.path.dirname(out_xyls), exist_ok=True)
+            xyls.writeto(out_xyls, overwrite=True)
+
+    def get_solutions(self, xyls=False):
+        xylsdir = os.path.join(self.astrodir, "xyls/*.xyls")
+        os.makedirs(os.path.dirname(xylsdir), exist_ok=True)
+
+        solveddir = os.path.join(self.astrodir, "solved")
+        os.makedirs(solveddir, exist_ok=True)
+
+        os.system(f'wsl ~ -e sh -c "solve-field {xylsdir} --overwrite --dir {solveddir} --no-plots --scale-units arcsecperpix"')
+
+        for name, obs in self.observations.items():
+            try:
+                obs.set_wcs(os.path.join(self.resultdir, "solved", name + ".wcs").replace("\\","/"))
+                obs.set_corr(os.path.join(self.resultdir, "solved", name + ".corr").replace("\\","/"))
+            except:
+                print("Oh no!")
+                obs.success = False
+
+    def make_poly(self, degree=1):
+        for obs in self.observations.values():
+            if obs.success == False:
+                continue
+            obs.fit_poly(degree)     
+
+    def track_objects(self, ids, rad=30):
+        
+        for obs in tqdm(self.observations.values(), total=len(self.observations), desc="Tracking"):
+             ephem = obs.get_ephemeris(ids)
+
+             for id, coord in ephem:
+                 x, y = self.wcs.world_to_pixel(coord)
+                 ap = CircularAperture((x,y), rad)
+                 (x_img, y_img, params) = obs.Gaussean2D_centroid(ap)
+
+
+
+
+
 
 
 
@@ -304,3 +381,9 @@ def gnomonic_inverse(xi, eta, ra0_deg, dec0_deg):
 
     # convert back to degrees, return
     return np.rad2deg(ra), np.rad2deg(dec)
+
+astro = astrometry("12_411/data/", "12_411/data/", "/mnt/c/Users/truji/Desktop/MIT_F25/12_411/data/", "O20260109_1151")
+
+astro.get_xyls()
+astro.get_solutions()
+astro.make_poly()
