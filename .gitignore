@@ -2,3 +2,9 @@ target_selection/best_targets.csv
 target_selection/possible_targets.txt
 code/testing.py
 data
+code/__pycache__/astrometry.cpython-313.pyc
+data/O20260109_1151.fits
+figures/8MKK001.gif
+figures/2012PQ28.gif
+solved/O20260109_1151.axy
+target_selection/candidate_picking.ipynb

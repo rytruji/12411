@@ -19,9 +19,12 @@ import astropy.units as u
 
 from astroquery.jplhorizons import Horizons
 
+from photutils.centroids import centroid_2dg, centroid_com
+
 from copy import deepcopy
 
 import os
+import glob
 
 import numpy as np
 
@@ -29,6 +32,10 @@ from photutils.aperture import CircularAperture
 from photutils.detection import DAOStarFinder
 
 from tqdm import tqdm
+
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.colors import LogNorm
 
 ######################################################################################
 #------------------------------------------------------------------------------------#
@@ -60,7 +67,8 @@ class observation():
         '''
         Sets self.wcs to the given WCS.
         '''
-        self.wcs = WCS(wcs)
+        wcs = f.open(wcs)
+        self.wcs = WCS(wcs[0])
 
     def set_corr(self, corr):
         '''
@@ -119,7 +127,10 @@ class observation():
         sources = daofind(self.data, mask=mask)
         if self.verbose and len(sources) == 0: print("daofind found no sources. Maybe decrease fwhm or sigma?")
         elif self.verbose: print(f"daofind returned {len(sources)} sources")
-        return sources
+        # sort by source magnitude since most of this is probably noise or very small
+        sources.sort("mag")
+        # return top 50 sources to not overwhelm astrometry.net
+        return sources[:50]
 
     def get_sources_xyls(self, sources, name=None, outdir=None):
         '''
@@ -166,7 +177,7 @@ class observation():
         utc = Time(self.header.get("DATE-OBS"), scale='utc')
         ephem = {}
         for name in ids:
-            obj = Horizons(name, location=810, epochs=[utc])
+            obj = Horizons(name, location=810, epochs=[utc.tdb.jd])
             tab = obj.ephemerides()
             ra_deg  = float(tab['RA'][0])   # degrees
             dec_deg = float(tab['DEC'][0])  # degrees
@@ -193,10 +204,37 @@ class observation():
         poly_xi  = models.Polynomial2D(degree=degree)
         poly_eta = models.Polynomial2D(degree=degree)
 
+        poly_x = models.Polynomial2D(degree=degree)
+        poly_y = models.Polynomial2D(degree=degree)
+
         fitter = fitting.LinearLSQFitter()
 
-        self.fit_xi  = fitter(poly_xi, x_n, y_n, xi_n)
-        self.fit_eta = fitter(poly_eta, x_n, y_n, eta_n)
+        fit_xi  = fitter(poly_xi, x_n, y_n, xi_n)
+        fit_eta = fitter(poly_eta, x_n, y_n, eta_n)
+
+        fit_x = fitter(poly_x, xi_n, eta_n, x_n)
+        fit_y = fitter(poly_y, xi_n, eta_n, y_n)
+
+        def converter(x, y):
+            xi_T  = fit_xi(x, y)
+            eta_T = fit_eta(x, y)
+
+            ra_fit_deg, dec_fit_deg = gnomonic_inverse(xi_T, eta_T, ra0, dec0)
+
+            sky_fit = SkyCoord(ra_fit_deg * u.deg, dec_fit_deg * u.deg, frame="icrs")
+
+            return sky_fit
+        
+        def anticonverter(coord):
+            xi_T, eta_T = gnomonic_projection(coord.ra.to(u.deg), coord.dec.to(u.deg), ra0, dec0)
+
+            x_fit = fit_x(xi_T, eta_T)
+            y_fit = fit_y(xi_T, eta_T)
+
+            return (x_fit, y_fit)
+
+        self.converter = converter
+        self.anticonverter = anticonverter
 
     def Gaussean2D_centroid(self, ap):
         mask = ap.to_mask(method="center")
@@ -228,41 +266,140 @@ class observation():
 
         y0, x0 = mask.bbox.iymin, mask.bbox.ixmin
 
-        x_img = x0 + xc
-        y_img = y0 + yc
+        # x_img = x0 + xc
+        # y_img = y0 + yc
 
-        params = {name: getattr(g_fit, name).value for name in g_fit.param_names}
+        # return (x_img, y_img, params)
+        return (xc, yc)
 
-        return (x_img, y_img, params)
+    def c2dg(self, ap):
+        mask = ap.to_mask(method="center")
+        values = mask.cutout(self.data, fill_value=np.nan)
+
+        y0, x0 = mask.bbox.iymin, mask.bbox.ixmin
+        ny, nx = values.shape
+
+        (xc, yc) = centroid_2dg(values)
+
+        return (xc, yc)
     
+    def centroid_test_plot(self, ap, dir, name="test_plot"):
+        print("plotting now!!!!!!!!!!!")
+        fig = plt.figure(figsize=(9, 5.0))
+        ax = fig.add_subplot()
+        
+        mask = ap.to_mask(method="center")
+        values = mask.cutout(self.data, fill_value=np.nan)
+
+        im = ax.imshow(
+            values,
+            cmap="gray_r",
+            norm=LogNorm(vmin=1, vmax=np.nanmax(self.data))
+        )
+
+        x_me, y_me = self.Gaussean2D_centroid(ap)
+
+        x_phot, y_phot = self.c2dg(ap)
+        print(x_me, y_me, "\n", x_phot, y_phot)
+
+        dao = DAOStarFinder(fwhm=10, threshold=10)
+        sources = dao(values)
+
+        ax.scatter((x_me), (y_me), marker="+", c="r")
+        ax.scatter((x_phot), (y_phot), marker="+", c="k")
+        ax.scatter(sources["xcentroid"], sources["ycentroid"], marker="x", c="b")
+
+        plotdir = os.path.join(dir, "plots").replace("\\","/")
+        os.makedirs(plotdir, exist_ok=True)
+
+        plt.savefig(os.path.join(plotdir, f"{name}.pdf").replace("\\","/"), dpi=300, bbox_inches="tight")
+
+
+    
+    def fits_plot(self, dir, name="fits_plot", pred_aps=None, fit_aps=None):
+
+        fig = plt.figure(figsize=(9, 5.0))
+        ax = fig.add_subplot(projection=self.wcs)
+
+        im = ax.imshow(
+            self.data,
+            cmap="gray_r",
+            norm=LogNorm(vmin=1, vmax=np.nanmax(self.data))
+        )
+    
+        ra  = ax.coords[0]
+        dec = ax.coords[1]
+
+        ra.set_major_formatter('hh:mm:ss')
+        dec.set_major_formatter('dd:mm:ss')
+
+        ra.display_minor_ticks(True)
+        dec.display_minor_ticks(True)
+
+        ra.set_minor_frequency(4)
+        dec.set_minor_frequency(4)
+
+        ra.set_ticklabel(exclude_overlapping=False, simplify=False)
+        dec.set_ticklabel(exclude_overlapping=False, simplify=False)
+
+        ra.set_axislabel("RA (HH MM SS)")
+        dec.set_axislabel("Dec (DD MM SS)")
+
+        cbar = fig.colorbar(im, ax=ax)
+        cbar.set_label("Counts")
+
+        handles = []
+
+        if fit_aps:
+            apertures_f = CircularAperture(fit_aps, 15)
+            apertures_f.plot(ax=ax, color='r')
+            handles.append(Line2D([0], [0], color='r', label='Fit Position'))
+
+        if pred_aps:
+            apertures_p = CircularAperture(pred_aps, 30)
+            apertures_p.plot(ax=ax, color='k', ls='--')
+            handles.append(Line2D([0], [0], color='k', ls='--', label='Predicted Position'))
+
+        ax.legend(handles=handles)
+
+        plotdir = os.path.join(dir, "plots").replace("\\","/")
+        os.makedirs(plotdir, exist_ok=True)
+
+        plt.savefig(os.path.join(plotdir, f"{name}.pdf").replace("\\","/"), dpi=300, bbox_inches="tight")
+
+
+
 
 
 class astrometry():
-    def __init__(self, datadir, resultdir, astrodir, image_names=None):
+    def __init__(self, dir, lindir, image_names=None):
 
         basedir = os.path.abspath(".")
-
-        self.datadir = os.path.join(basedir, datadir).replace("\\","/")
-        self.resultdir = os.path.join(basedir, resultdir).replace("\\","/")
-
-        self.astrodir = astrodir
+        self.datadir = dir
+        self.lindir = lindir
 
         self.observations = {}
 
-        if image_names:
-            self.extend(image_names)
+        self.extend(image_names)
             
     def extend(self, image_names):
 
-        # test for string, should be path to .fits observation
-        if type(image_names) is str:
-            full_path = os.path.join(self.datadir, image_names + ".fits")
+        # test for directory, call extend on contents if so
+        if not image_names:
+            # collect all files in datadir and recurvisely call extend
+            new_files = glob.glob(os.path.join(self.datadir, "*.fits").replace("\\","/"))
+            filenames = [os.path.basename(f) for f in new_files]
+            self.extend(filenames)
+
+        # must be a filename, create obs instance using its path
+        elif type(image_names) is str:
+            full_path = os.path.join(self.datadir, image_names)
             self.observations[image_names] = observation(full_path)
         
-        # is either invalid or a list
+        # is either invalid or a list. observation() will handle invalid
         else:
             for name in image_names:
-                full_path = os.path.join(self.datadir, name + ".fits")
+                full_path = os.path.join(self.datadir, name)
                 self.observations[name] = observation(full_path)
 
     def get_xyls(self, optimize=False):
@@ -270,45 +407,63 @@ class astrometry():
             sources = obs.get_dao()
             xyls = obs.get_sources_xyls(sources)
             
-            out_xyls = os.path.join(self.resultdir, "xyls", f"{name}.xyls")
+            out_xyls = os.path.join(self.datadir, f"xyls/{name}.xyls").replace("\\","/")
             os.makedirs(os.path.dirname(out_xyls), exist_ok=True)
             xyls.writeto(out_xyls, overwrite=True)
 
     def get_solutions(self, xyls=False):
-        xylsdir = os.path.join(self.astrodir, "xyls/*.xyls")
-        os.makedirs(os.path.dirname(xylsdir), exist_ok=True)
+        if xyls:
+            self.get_xyls()
+            platedir = os.path.join(self.lindir, "xyls/*.xyls").replace("\\","/")
+        else:
+            platedir = os.path.join(self.lindir, "*.fits").replace("\\","/")
 
-        solveddir = os.path.join(self.astrodir, "solved")
+        solveddir = os.path.join(self.lindir, "solved").replace("\\","/")
         os.makedirs(solveddir, exist_ok=True)
 
-        os.system(f'wsl ~ -e sh -c "solve-field {xylsdir} --overwrite --dir {solveddir} --no-plots --scale-units arcsecperpix"')
+        os.system(f'wsl ~ -e sh -c "solve-field {platedir} --overwrite --dir {solveddir} --no-plots --scale-units arcsecperpix"')
 
         for name, obs in self.observations.items():
             try:
-                obs.set_wcs(os.path.join(self.resultdir, "solved", name + ".wcs").replace("\\","/"))
-                obs.set_corr(os.path.join(self.resultdir, "solved", name + ".corr").replace("\\","/"))
+                obs.set_wcs(os.path.join(self.datadir, "solved", name + ".wcs").replace("\\","/"))
+                obs.set_corr(os.path.join(self.datadir, "solved", name + ".corr").replace("\\","/"))
             except:
                 print("Oh no!")
                 obs.success = False
 
-    def make_poly(self, degree=1):
+    def make_converters(self, degree=1):
         for obs in self.observations.values():
             if obs.success == False:
                 continue
-            obs.fit_poly(degree)     
+            obs.fit_poly(degree)
 
-    def track_objects(self, ids, rad=30):
-        
-        for obs in tqdm(self.observations.values(), total=len(self.observations), desc="Tracking"):
-             ephem = obs.get_ephemeris(ids)
+    def track_objects(self, ids, rad=15, make_plots=False):
+        positions = {id: [] for id in ids}
+        for name, obs in tqdm(self.observations.items(), total=len(self.observations), desc="Tracking"):
+            if not obs.success: continue
+            ephem = obs.get_ephemeris(ids)
 
-             for id, coord in ephem:
-                 x, y = self.wcs.world_to_pixel(coord)
-                 ap = CircularAperture((x,y), rad)
-                 (x_img, y_img, params) = obs.Gaussean2D_centroid(ap)
+            pred_pos = []
+            fit_pos = []
 
+            for id, coord in ephem.items():
+                x, y = obs.anticonverter(coord)
+                ap = CircularAperture((x,y), rad)
+                # (x_img, y_img, error) = obs.Gaussean2D_centroid(ap)
+                (x_img, y_img) = obs.c2dg(ap)
 
+                positions[id].append((x_img, y_img))
 
+                pred_pos.append((x,y))
+                fit_pos.append((x_img,y_img))
+
+            if make_plots:
+                obs.fits_plot(self.datadir, f"track_results_{name}", pred_aps=pred_pos, fit_aps=fit_pos)
+                print("plot requesting")
+                obs.centroid_test_plot(ap, self.datadir, f"cent_fit_{name}")
+                print("plot made?")
+
+        return positions
 
 
 
@@ -363,27 +518,21 @@ def gnomonic_inverse(xi, eta, ra0_deg, dec0_deg):
     dec0 = np.deg2rad(dec0_deg)
 
     # get denominator
-    denom = np.sqrt(1.0 + xi**2 + eta**2)
+    den = np.sqrt(1.0 + xi**2 + eta**2)
 
     # calculate dec
-    sin_dec = (np.sin(dec0) + eta * np.cos(dec0)) / denom
+    sin_dec = (np.sin(dec0) + eta * np.cos(dec0)) / den
     dec = np.arcsin(sin_dec)
 
     # calculate ra
     num = xi
     den = np.cos(dec0) - eta * np.sin(dec0)
 
-    delta_ra = np.arctan2(num, den)
+    delta_ra = np.arctan(num, den)
     ra = ra0 + delta_ra
 
     # get only remainder
-    ra = (ra + 2*np.pi) % (2*np.pi)
+    ra = ra % (2*np.pi)
 
     # convert back to degrees, return
     return np.rad2deg(ra), np.rad2deg(dec)
-
-astro = astrometry("12_411/data/", "12_411/data/", "/mnt/c/Users/truji/Desktop/MIT_F25/12_411/data/", "O20260109_1151")
-
-astro.get_xyls()
-astro.get_solutions()
-astro.make_poly()
