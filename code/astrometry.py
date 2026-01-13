@@ -17,9 +17,14 @@ from astropy.modeling import models, fitting
 from astropy.table import Table
 import astropy.units as u
 
-from astroquery.jplhorizons import Horizons
+import warnings
+from astropy.wcs import FITSFixedWarning
+from astropy.units import UnitsWarning
 
-from photutils.centroids import centroid_2dg, centroid_com
+warnings.filterwarnings("ignore", category=FITSFixedWarning)
+warnings.filterwarnings("ignore", category=UnitsWarning)
+
+from astroquery.jplhorizons import Horizons
 
 from copy import deepcopy
 
@@ -75,6 +80,10 @@ class observation():
         Sets self.corr to the given .corr.
         '''
         self.corr = Table.read(corr)
+
+    # def calibrate(self, bias, flat, dark=None):
+    #     if dark:
+    #         self.data = 
     
     def extract_from_aperture(self, coords, rad):
         '''
@@ -226,7 +235,7 @@ class observation():
             return sky_fit
         
         def anticonverter(coord):
-            xi_T, eta_T = gnomonic_projection(coord.ra.to(u.deg), coord.dec.to(u.deg), ra0, dec0)
+            xi_T, eta_T = gnomonic_projection(coord.ra.deg, coord.dec.deg, ra0, dec0)
 
             x_fit = fit_x(xi_T, eta_T)
             y_fit = fit_y(xi_T, eta_T)
@@ -236,85 +245,77 @@ class observation():
         self.converter = converter
         self.anticonverter = anticonverter
 
-    def Gaussean2D_centroid(self, ap):
-        mask = ap.to_mask(method="center")
-        values = mask.cutout(self.data, fill_value=np.nan)
+    # def Gaussean2D_centroid(self, ap):
+    #     mask = ap.to_mask(method="center")
+    #     values = mask.cutout(self.data, fill_value=np.nan)
 
-        ny, nx = values.shape
-        yy, xx = np.mgrid[0:ny, 0:nx]
+    #     ny, nx = values.shape
+    #     yy, xx = np.mgrid[0:ny, 0:nx]
 
-        amp0 = np.nanmax(values)
-        x0 = nx / 2.0
-        y0 = ny / 2.0
-        sigma0 = max(1.0, ap.r / 2.0)
+    #     amp0 = np.nanmax(values)
+    #     x0 = nx / 2.0
+    #     y0 = ny / 2.0
+    #     sigma0 = max(1.0, ap.r / 2.0)
 
-        # beginning assumption: centered in aperture, sigma1 is half aperture radius
-        g_init = models.Gaussian2D(
-            amplitude=amp0,
-            x_mean=x0,
-            y_mean=y0,
-            x_stddev=sigma0,
-            y_stddev=sigma0,
-            theta=0.0,
-        )
+    #     # beginning assumption: centered in aperture, sigma1 is half aperture radius
+    #     g_init = models.Gaussian2D(
+    #         amplitude=amp0,
+    #         x_mean=x0,
+    #         y_mean=y0,
+    #         x_stddev=sigma0,
+    #         y_stddev=sigma0,
+    #         theta=0.0,
+    #     )
 
-        fitter = fitting.LevMarLSQFitter()
-        g_fit = fitter(g_init, xx, yy, values)
+    #     fitter = fitting.LevMarLSQFitter()
+    #     g_fit = fitter(g_init, xx, yy, values)
 
-        xc = float(g_fit.x_mean.value)
-        yc = float(g_fit.y_mean.value)
+    #     xc = float(g_fit.x_mean.value)
+    #     yc = float(g_fit.y_mean.value)
 
-        y0, x0 = mask.bbox.iymin, mask.bbox.ixmin
+    #     y0, x0 = mask.bbox.iymin, mask.bbox.ixmin
 
-        # x_img = x0 + xc
-        # y_img = y0 + yc
+    #     # x_img = x0 + xc
+    #     # y_img = y0 + yc
 
-        # return (x_img, y_img, params)
-        return (xc, yc)
-
-    def c2dg(self, ap):
-        mask = ap.to_mask(method="center")
-        values = mask.cutout(self.data, fill_value=np.nan)
-
-        y0, x0 = mask.bbox.iymin, mask.bbox.ixmin
-        ny, nx = values.shape
-
-        (xc, yc) = centroid_2dg(values)
-
-        return (xc, yc)
+    #     # return (x_img, y_img, params)
+    #     return (xc, yc)
     
     def centroid_test_plot(self, ap, dir, name="test_plot"):
-        print("plotting now!!!!!!!!!!!")
-        fig = plt.figure(figsize=(9, 5.0))
+        fig = plt.figure()
         ax = fig.add_subplot()
         
         mask = ap.to_mask(method="center")
         values = mask.cutout(self.data, fill_value=np.nan)
+        y0, x0 = mask.bbox.iymin, mask.bbox.ixmin
 
         im = ax.imshow(
             values,
             cmap="gray_r",
             norm=LogNorm(vmin=1, vmax=np.nanmax(self.data))
         )
-
-        x_me, y_me = self.Gaussean2D_centroid(ap)
-
-        x_phot, y_phot = self.c2dg(ap)
-        print(x_me, y_me, "\n", x_phot, y_phot)
-
-        dao = DAOStarFinder(fwhm=10, threshold=10)
-        sources = dao(values)
-
-        ax.scatter((x_me), (y_me), marker="+", c="r")
-        ax.scatter((x_phot), (y_phot), marker="+", c="k")
-        ax.scatter(sources["xcentroid"], sources["ycentroid"], marker="x", c="b")
+        
+        x_dao, y_dao = self.dao_centroid(ap)
+        x_dao -= x0
+        y_dao -= y0
+        ax.scatter((x_dao), (y_dao), marker="x", c="b")
 
         plotdir = os.path.join(dir, "plots").replace("\\","/")
         os.makedirs(plotdir, exist_ok=True)
 
         plt.savefig(os.path.join(plotdir, f"{name}.pdf").replace("\\","/"), dpi=300, bbox_inches="tight")
 
+    def dao_centroid(self, ap):
+        mask = ap.to_mask(method="center")
+        values = mask.cutout(self.data, fill_value=np.nan)
 
+        dao = DAOStarFinder(fwhm=self.fwhm, threshold=self.sigma)
+        sources = dao(values)
+
+        y0, x0 = mask.bbox.iymin, mask.bbox.ixmin
+
+        sources.sort("mag")
+        return sources["xcentroid"][0] + x0, sources["ycentroid"][0] + y0
     
     def fits_plot(self, dir, name="fits_plot", pred_aps=None, fit_aps=None):
 
@@ -351,12 +352,12 @@ class observation():
         handles = []
 
         if fit_aps:
-            apertures_f = CircularAperture(fit_aps, 15)
+            apertures_f = CircularAperture(fit_aps, 25)
             apertures_f.plot(ax=ax, color='r')
             handles.append(Line2D([0], [0], color='r', label='Fit Position'))
 
         if pred_aps:
-            apertures_p = CircularAperture(pred_aps, 30)
+            apertures_p = CircularAperture(pred_aps, 50)
             apertures_p.plot(ax=ax, color='k', ls='--')
             handles.append(Line2D([0], [0], color='k', ls='--', label='Predicted Position'))
 
@@ -367,7 +368,7 @@ class observation():
 
         plt.savefig(os.path.join(plotdir, f"{name}.pdf").replace("\\","/"), dpi=300, bbox_inches="tight")
 
-
+        
 
 
 
@@ -421,6 +422,7 @@ class astrometry():
         solveddir = os.path.join(self.lindir, "solved").replace("\\","/")
         os.makedirs(solveddir, exist_ok=True)
 
+        print("Reqesting plate solutions from local Astrometry.net...")
         os.system(f'wsl ~ -e sh -c "solve-field {platedir} --overwrite --dir {solveddir} --no-plots --scale-units arcsecperpix"')
 
         for name, obs in self.observations.items():
@@ -428,7 +430,7 @@ class astrometry():
                 obs.set_wcs(os.path.join(self.datadir, "solved", name + ".wcs").replace("\\","/"))
                 obs.set_corr(os.path.join(self.datadir, "solved", name + ".corr").replace("\\","/"))
             except:
-                print("Oh no!")
+                print(f"Field {name} did not solve successfully and has been skipped.")
                 obs.success = False
 
     def make_converters(self, degree=1):
@@ -437,7 +439,7 @@ class astrometry():
                 continue
             obs.fit_poly(degree)
 
-    def track_objects(self, ids, rad=15, make_plots=False):
+    def track_objects(self, ids, rad=12, make_plots=False):
         positions = {id: [] for id in ids}
         for name, obs in tqdm(self.observations.items(), total=len(self.observations), desc="Tracking"):
             if not obs.success: continue
@@ -450,7 +452,7 @@ class astrometry():
                 x, y = obs.anticonverter(coord)
                 ap = CircularAperture((x,y), rad)
                 # (x_img, y_img, error) = obs.Gaussean2D_centroid(ap)
-                (x_img, y_img) = obs.c2dg(ap)
+                (x_img, y_img) = obs.dao_centroid(ap)
 
                 positions[id].append((x_img, y_img))
 
@@ -459,12 +461,9 @@ class astrometry():
 
             if make_plots:
                 obs.fits_plot(self.datadir, f"track_results_{name}", pred_aps=pred_pos, fit_aps=fit_pos)
-                print("plot requesting")
-                obs.centroid_test_plot(ap, self.datadir, f"cent_fit_{name}")
-                print("plot made?")
+                obs.centroid_test_plot(ap, self.datadir, name=f"cent_fit_{name}")
 
         return positions
-
 
 
 
