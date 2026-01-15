@@ -22,11 +22,11 @@ class Projection():
         self.ra0, self.dec0 = ra0, dec0
 
         # construct field (x, y) and index (ra, dec) positions using corr
-        x_n = np.array(self.corr["field_x"])
-        y_n = np.array(self.corr["field_y"])
+        x_n = np.array(corr["field_x"])
+        y_n = np.array(corr["field_y"])
 
-        ra_n  = np.array(self.corr["index_ra"])
-        dec_n = np.array(self.corr["index_dec"])
+        ra_n  = np.array(corr["index_ra"])
+        dec_n = np.array(corr["index_dec"])
 
         # project all ra, dec around image center
         xi_n, eta_n = gnomonic_projection(ra_n, dec_n, ra0, dec0)
