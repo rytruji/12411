@@ -6,9 +6,11 @@
 
 from astropy.time import Time
 from astropy.coordinates import SkyCoord
+from astropy.io import fits as f
 import astropy.units as u
 
 import re
+import os
 from tqdm import tqdm
 
 import numpy as np
@@ -30,21 +32,37 @@ def get_user_xy(prompt):
 
     return x, y
 
-def linear_tracker(obs_init, obs_end):
+def linear_tracker(dir, obs_init, obs_end):
+    initdir = os.path.join(dir, "for_linear_tracking/init.fits").replace("\\", "/")
+    obs_init.save_to(initdir)
+    outdir = os.path.join(dir, "for_linear_tracking/out.fits").replace("\\", "/")
+    obs_end.save_to(outdir)
 
     x_init, y_init = get_user_xy(f"Please input the (x,y) coordinates of the object in {obs_init.name}: ")
     x_end, y_end = get_user_xy(f"Please input the (x,y) coordinates of the object in {obs_end.name}: ")
 
-    coord_init = obs_init.converter(x_init, y_init)
-    coord_end = obs_end.converter(x_end, y_end)
+    print(x_init, y_init)
+    print(x_end, y_end)
 
-    utc_init = Time(obs_init.header.get("DATE-OBS"), scale='utc')
-    utc_end = Time(obs_end.header.get("DATE-OBS"), scale='utc')
+    coord_init = obs_init.px_to_eq(x_init, y_init)
+    coord_end = obs_end.px_to_eq(x_end, y_end)
+
+    print(coord_init)
+    print(coord_end)
+
+    utc_init = Time(obs_init.header.get("DATE-OBS"), scale='utc') #  + "T" + obs_init.header.get("EXP-STRT")
+    utc_end = Time(obs_end.header.get("DATE-OBS"), scale='utc') #  + "T" + obs_end.header.get("EXP-STRT")
+
+    print(utc_init, utc_end)
 
     delta_T = (utc_end - utc_init).to(u.second)
 
+    print(delta_T)
+
     dra_dt = (coord_end.ra.deg - coord_init.ra.deg) / delta_T
     ddec_dt = (coord_end.dec.deg - coord_init.dec.deg) / delta_T
+
+    print(dra_dt, ddec_dt)
 
     def tracker(utc_obs):
         delta_T_obs = utc_obs - utc_init
@@ -67,7 +85,7 @@ def cull_stationary(all_sources, tol):
 
             sc = all_sources[k]
 
-            idx_ref, idx_sc, _, _ = sc.search_around_sky(ref, tol)
+            idx_ref, idx_sc, sep2d, _ = sc.search_around_sky(ref, tol)
 
             ref_is_static[idx_ref] = True
 

@@ -48,8 +48,6 @@ class Projection():
 
 
     def px_to_eq(self, x, y):
-        # x -= crpix1
-        # y -= crpix2
         xi_T  = self.fit_xi(x, y)
         eta_T = self.fit_eta(x, y)
 
@@ -63,8 +61,8 @@ class Projection():
     def eq_to_px(self, coord):
         xi_T, eta_T = gnomonic_projection(coord.ra.deg, coord.dec.deg, self.ra0, self.dec0)
 
-        x_fit = self.fit_x(xi_T, eta_T) # + crpix1
-        y_fit = self.fit_y(xi_T, eta_T) # + crpix2
+        x_fit = self.fit_x(xi_T, eta_T)
+        y_fit = self.fit_y(xi_T, eta_T)
 
         return x_fit, y_fit
     

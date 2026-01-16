@@ -18,7 +18,7 @@ import numpy as np
 #------------------------------------------------------------------------------------#
 ######################################################################################
 
-def calibrate(lightdata, biasdir, flatdir, darkdir=None):
+def calibrate(lightdata, biasdata, flatdata, darkdata=None):
     '''
     Docstring for calibrate
 
@@ -35,13 +35,7 @@ def calibrate(lightdata, biasdir, flatdir, darkdir=None):
     :param dark: (optional, default None) str, path to master dark fits file. 
     '''
 
-    biashdul = f.open(biasdir)
-    flathdul = f.open(flatdir)
-    
-    biasdata = biashdul[0].data
-    flatdata = flathdul[0].data
-
-    if darkdir:
+    if darkdata:
         print("Sorry, I haven't implimented the full calibration yet...")
 
     return (lightdata - biasdata) / flatdata

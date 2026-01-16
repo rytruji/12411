@@ -61,6 +61,7 @@ def source_plot(data, sources, outdir, name="detected_sources"):
 
     apertures.plot(ax=ax, color='blue', lw=0.5, alpha=0.5)
     
+    os.makedirs(outdir, exist_ok=True)
     plt.savefig(os.path.join(outdir, f"{name}.pdf").replace("\\","/"), dpi=300, bbox_inches="tight")
     plt.close(fig)
 
@@ -77,7 +78,7 @@ def centroid_test_plot(data, ap, centroid_results, outdir, name="centroid_test_p
     ax.imshow(
         values,
         cmap="gray",
-        norm=LogNorm(vmin=1, vmax=np.nanmax(data))
+        norm=LogNorm(vmin=np.nanmin(values), vmax=np.nanmax(values))
     )
 
     x_pos, y_pos = centroid_results
@@ -92,12 +93,13 @@ def centroid_test_plot(data, ap, centroid_results, outdir, name="centroid_test_p
 
     ax.scatter(x_pos, y_pos, marker="x", c="b")
 
+    os.makedirs(outdir, exist_ok=True)
     plt.savefig(os.path.join(outdir, f"{name}.pdf").replace("\\","/"), dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
 
-def fits_plot(data, wcs, outdir, name="fits_plot", pred_aps=None, fit_aps=None):
+def fits_plot(data, wcs, outdir, name="fits_plot", pred_xy=None, fit_xy=None):
 
     fig = plt.figure(figsize=(9, 5.0))
     ax = fig.add_subplot(projection=wcs)
@@ -131,17 +133,18 @@ def fits_plot(data, wcs, outdir, name="fits_plot", pred_aps=None, fit_aps=None):
 
     handles = []
 
-    if fit_aps:
-        apertures_f = CircularAperture(fit_aps, 25)
+    if fit_xy:
+        apertures_f = CircularAperture(fit_xy, 25)
         apertures_f.plot(ax=ax, color='r')
         handles.append(Line2D([0], [0], color='r', label='Fit Position'))
 
-    if pred_aps:
-        apertures_p = CircularAperture(pred_aps, 50)
+    if pred_xy:
+        apertures_p = CircularAperture(pred_xy, 50)
         apertures_p.plot(ax=ax, color='k', ls='--')
         handles.append(Line2D([0], [0], color='k', ls='--', label='Predicted Position'))
 
     ax.legend(handles=handles)
 
+    os.makedirs(outdir, exist_ok=True)
     plt.savefig(os.path.join(outdir, f"{name}.pdf").replace("\\","/"), dpi=300, bbox_inches="tight")
     plt.close(fig)

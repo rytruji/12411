@@ -4,15 +4,13 @@
 #-------------------------------------------------------------------------------------------------------#
 #########################################################################################################
 
-from projection import gnomonic_inverse, gnomonic_projection
+from .projection import Projection
 
 from astropy.stats import sigma_clipped_stats
 from astropy.io import fits as f
-from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
 from astropy.modeling import models, fitting
 from astropy.table import Table
-import astropy.units as u
 
 import warnings
 from astropy.wcs import FITSFixedWarning
@@ -20,9 +18,7 @@ from astropy.units import UnitsWarning
 warnings.filterwarnings("ignore", category=FITSFixedWarning)
 warnings.filterwarnings("ignore", category=UnitsWarning)
 
-from astroquery.jplhorizons import Horizons
-
-from copy import deepcopy
+import os
 
 import numpy as np
 
@@ -38,9 +34,9 @@ from photutils.detection import DAOStarFinder
 class Observation():
     def __init__(self, dir, name=None, sigma=10, fwhm=10, verbose=False):
         self.dir = dir
-        self.hdul = f.open(self.dir)
-        self.data = self.hdul[0].data
-        self.header = self.hdul[0].header
+        with f.open(self.dir) as hdul:
+            self.data = hdul[0].data
+            self.header = hdul[0].header
 
         self.name = name
 
@@ -58,7 +54,8 @@ class Observation():
         Sets self.data to the given data. Saves old data to self.old_data. Returns:
             (1) None
         '''
-        self.data = deepcopy(data)
+        self._clipped_cache = None
+        self.data = data
     
 
     def set_wcs(self, wcs):
@@ -66,8 +63,8 @@ class Observation():
         Sets self.wcs to the given WCS. Returns:
             (1) None
         '''
-        wcs = f.open(wcs)
-        self.wcs = WCS(wcs[0])
+        with f.open(wcs) as hdul:
+            self.wcs = WCS(hdul[0].header)
 
 
     def set_corr(self, corr):
@@ -82,12 +79,14 @@ class Observation():
         self.set_data(self.data[y_min:y_max, x_min:x_max])
 
 
-    def save_to(self, dir):
+    def save_to(self, outdir):
         out = f.PrimaryHDU(self.data)
-        out.writeto(dir, overwrite=True)
+        os.makedirs(os.path.dirname(outdir), exist_ok=True)
+
+        out.writeto(outdir, overwrite=True)
 
 
-    def calibrate(self, biaspath, flatpath, darkpath=None):
+    def calibrate(self, biasdata, flatdata, darkdata=None):
         '''
         Docstring for calibrate
 
@@ -98,7 +97,7 @@ class Observation():
         if no master dark is given. Returns:
             (1) None
         '''
-        calibrated_data = calibrate(self.data, biaspath, flatpath)
+        calibrated_data = calibrate(self.data, biasdata, flatdata, darkdata)
         self.set_data(calibrated_data)
     
 
@@ -119,6 +118,12 @@ class Observation():
         new_data = mask.get_values(self.data)
         signal = np.sum(new_data)
         return new_data, signal
+    
+
+    def _bg_stats(self):
+        if getattr(self, "_clipped_cache", None) is None:
+            self._clipped_cache = sigma_clipped_stats(self.data, sigma=3.0)
+        return self._clipped_cache
 
 
     def get_dao(self, mask_bounds=None, make_plot=False):
@@ -137,9 +142,8 @@ class Observation():
 
         # calculate sigma_clipped_stats to get rough background stats with significant pixels clipped
         if self.verbose: print("\n\nCalculating obervation statistics...")
-        mean, median, std = sigma_clipped_stats(self.data, sigma=3.0)
+        mean, median, std = self._bg_stats()
         if self.verbose: print(f"Observation statistics:\nMean = {mean}\nMedian = {median}\nStd = {std}\n\nRunning daofind...")
-
 
         daofind = DAOStarFinder(fwhm=self.fwhm, threshold=self.sigma*std, exclude_border=True)
 
@@ -193,6 +197,13 @@ class Observation():
         self.xyls = hdu
         return self.xyls
     
+    
+    def get_projection(self, degree):
+        ra0, dec0 = self.wcs.wcs.crval
+        projection = Projection(self.corr, ra0, dec0, degree=degree)
+        self.eq_to_px = projection.eq_to_px
+        self.px_to_eq = projection.px_to_eq
+
 
     def Moffat2D_centroid(self, ap):
         mask = ap.to_mask(method="center")
