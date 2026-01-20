@@ -32,7 +32,7 @@ def get_user_xy(prompt):
 
     return x, y
 
-def linear_tracker(dir, obs_init, obs_end):
+def linear_tracker(dir, midtime, obs_init, obs_end):
     initdir = os.path.join(dir, "for_linear_tracking/init.fits").replace("\\", "/")
     obs_init.save_to(initdir)
     outdir = os.path.join(dir, "for_linear_tracking/out.fits").replace("\\", "/")
@@ -50,8 +50,8 @@ def linear_tracker(dir, obs_init, obs_end):
     print(coord_init)
     print(coord_end)
 
-    utc_init = Time(obs_init.header.get("DATE-OBS"), scale='utc') #  + "T" + obs_init.header.get("EXP-STRT")
-    utc_end = Time(obs_end.header.get("DATE-OBS"), scale='utc') #  + "T" + obs_end.header.get("EXP-STRT")
+    utc_init = midtime(obs_init.header)
+    utc_end = midtime(obs_end.header)
 
     print(utc_init, utc_end)
 

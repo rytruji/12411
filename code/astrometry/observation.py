@@ -167,14 +167,15 @@ class Observation():
         self.sources.sort("mag")
         return self.sources
 
-    def get_segmentation(self):
+
+    def get_segmentation(self, fwhm, threshold):
         bkg_estimator = MedianBackground()
         bkg = Background2D(self.data, 50, filter_size=(3, 3), bkg_estimator=bkg_estimator)
         back2d_data = self.data - bkg.background
 
-        threshold = self.sigma * bkg.background_rms
+        threshold *= bkg.background_rms
 
-        kernel = make_2dgaussian_kernel(self.fwhm, (2 * self.fwhm) - 1)
+        kernel = make_2dgaussian_kernel(fwhm, (2 * fwhm) - 1)
         convolved_data = convolve(back2d_data, kernel)
 
         segment_map = detect_sources(convolved_data, threshold, npixels=10)
@@ -186,8 +187,6 @@ class Observation():
         cat = SourceCatalog(self.data, segm_deblend, convolved_data=convolved_data)
 
         return cat, segm_deblend
-
-
 
 
     def get_sources_xyls(self, sources, name=None, outdir=None):

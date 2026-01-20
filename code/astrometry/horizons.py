@@ -13,24 +13,21 @@ from astroquery.jplhorizons import Horizons
 #-------------------------------------------------------------------------------------------------------------#
 ###############################################################################################################
 
-def get_ephemeris(ids, utc):
+def get_ephemeris(id, loc, utc):
     '''
     Docstring for get_ephemeris
 
     Given a list of object ids and equinox, queries JPL Horizons to produce corresponding ephemerides using header time. Returns:
         (1) ephem, dictionary containing id: (SkyCoord, ephemeris) pairs for each target id.
     
-    :param ids: list, integers or strings corresponding to object ids.
+    :param id: integer or string corresponding to object id.
     :param utc: Time, used as observation equinox
     '''
-    ephem = {}
-    for name in ids:
-        obj = Horizons(name, location=810, epochs=[utc.tdb.jd])
-        tab = obj.ephemerides()
-        ra_deg  = float(tab['RA'][0])   # degrees
-        dec_deg = float(tab['DEC'][0])  # degrees
-        ephem[name] = SkyCoord(ra_deg*u.deg, dec_deg*u.deg, frame='icrs')
-    return ephem
+    obj = Horizons(id, location=loc, epochs=[utc.tdb.jd])
+    tab = obj.ephemerides()
+    ra_deg  = float(tab['RA'][0])   # degrees
+    dec_deg = float(tab['DEC'][0])  # degrees
+    return SkyCoord(ra_deg*u.deg, dec_deg*u.deg, frame='icrs')
 
 def distance_km(id, loc, time):
     '''

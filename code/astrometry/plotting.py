@@ -218,16 +218,13 @@ def position_plot(positions, residuals, outdir, name="position_plot", obs_refere
     ax_resids.sharex(ax_dec)
     ax_resids.sharey(ax_ra)
 
-    for id, coords in positions.items():
-        scatter = ax.scatter([coord.ra.deg for coord in coords],
-                    [coord.dec.deg for coord in coords],
-                    s=30,
-                    marker="o",
-                    alpha=0.7,
-                    color="k"
-                    )
-        
-        scatter.set_label(id)
+    ax.scatter([coord.ra.deg for coord in positions],
+                [coord.dec.deg for coord in positions],
+                s=30,
+                marker="o",
+                alpha=0.7,
+                color="k"
+                )
         
     ra_offset, dec = [pair for pair in zip(*residuals[0])]
     dec_offset, ra = [pair for pair in zip(*residuals[1])]
