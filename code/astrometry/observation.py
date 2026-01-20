@@ -26,6 +26,10 @@ from calibration import calibrate
 
 from photutils.aperture import CircularAperture
 from photutils.detection import DAOStarFinder
+from photutils.background import Background2D, MedianBackground
+from astropy.convolution import convolve
+from photutils.segmentation import make_2dgaussian_kernel
+from photutils.segmentation import detect_sources, deblend_sources, SourceCatalog
 
 #########################################################################################################
 #-------------------------------------------------------------------------------------------------------#
@@ -163,6 +167,28 @@ class Observation():
         self.sources.sort("mag")
         return self.sources
 
+    def get_segmentation(self):
+        bkg_estimator = MedianBackground()
+        bkg = Background2D(self.data, 50, filter_size=(3, 3), bkg_estimator=bkg_estimator)
+        back2d_data = self.data - bkg.background
+
+        threshold = self.sigma * bkg.background_rms
+
+        kernel = make_2dgaussian_kernel(self.fwhm, (2 * self.fwhm) - 1)
+        convolved_data = convolve(back2d_data, kernel)
+
+        segment_map = detect_sources(convolved_data, threshold, npixels=10)
+
+        segm_deblend = deblend_sources(convolved_data, segment_map,
+                               npixels=10, nlevels=32, contrast=0.001,
+                               progress_bar=False)
+        
+        cat = SourceCatalog(self.data, segm_deblend, convolved_data=convolved_data)
+
+        return cat, segm_deblend
+
+
+
 
     def get_sources_xyls(self, sources, name=None, outdir=None):
         '''
@@ -200,9 +226,9 @@ class Observation():
     
     def get_projection(self, degree):
         ra0, dec0 = self.wcs.wcs.crval
-        projection = Projection(self.corr, ra0, dec0, degree=degree)
-        self.eq_to_px = projection.eq_to_px
-        self.px_to_eq = projection.px_to_eq
+        self.projection = Projection(self.corr, ra0, dec0, degree=degree)
+        self.eq_to_px = self.projection.eq_to_px
+        self.px_to_eq = self.projection.px_to_eq
 
 
     def Moffat2D_centroid(self, ap):
@@ -237,7 +263,7 @@ class Observation():
 
         params = {name: getattr(m_fit, name).value for name in m_fit.param_names}
 
-        return (xc, yc, params)
+        return (xc, yc)
 
 
     def Gaussean2D_centroid(self, ap):
@@ -275,7 +301,7 @@ class Observation():
 
         params = {name: getattr(g_fit, name).value for name in g_fit.param_names}
 
-        return (xc, yc, params)
+        return (xc, yc)
 
 
     def dao_centroid(self, ap):

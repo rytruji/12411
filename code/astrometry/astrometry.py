@@ -7,12 +7,14 @@
 from .observation import Observation
 from .tracking import cull_stationary, movement_search, linear_tracker
 from .projection import fit_validator
-from .plotting import fits_plot, centroid_test_plot, source_plot
+from .plotting import fits_plot, centroid_test_plot, source_plot, residual_plot, segmentation_plot
 
 from astropy.coordinates import SkyCoord
 from astropy.io import fits as f
 from astropy.table import Table
 from astropy.time import Time
+from astropy.modeling import models, fitting
+import astropy.units as u
 
 from photutils.aperture import CircularAperture
 
@@ -104,8 +106,8 @@ class Astrometry():
             obs.calibrate(biasdata, flatdata, darkdata)
 
 
-    def get_xyls(self, fwhm=10, sigma=10, use_existing=False, make_plots=False):
-        for obs in tqdm(self.observations, total=self.total_count, desc="Identifying Sources with DAOfind"):
+    def get_xyls(self, fwhm=10, sigma=10, use_segmentation=False, use_existing=False, make_plots=False):
+        for obs in tqdm(self.observations, total=self.total_count, desc="Identifying Sources:"):
             # get directory to write to
             out_xyls = os.path.join(self.datadir, f"xyls/{obs.name}.xyls").replace("\\","/")
 
@@ -116,12 +118,31 @@ class Astrometry():
             obs.sigma = sigma
             obs.fwhm = fwhm
 
-            # get, format sources from obs
-            sources = obs.get_dao()
-            xyls = obs.get_sources_xyls(sources)
+            if use_segmentation:
+                # get SourceCatalog and deblended segmentation map of data
+                cat, segm_deblend = obs.get_segmentation()
+                
+                # turn cat into QTable that can be turned into an xyls
+                columns = ["xcentroid", "ycentroid", "kron_flux"]
+                sources = cat.to_table(columns=columns)
+                sources.sort("kron_flux")
+                sources.rename_column("kron_flux", "flux")
 
-            if make_plots:
-                source_plot(data=obs.data, sources=sources, outdir=self.plotdir, name=f"source_plot_{obs.name}")
+                # turn QTable into an xyls hdu
+                xyls = obs.get_sources_xyls(sources)
+
+                if make_plots:
+                    segmentation_plot(obs.data, cat, segm_deblend, self.plotdir, name=f"segmentation_plot_{obs.name}")
+                
+            else:
+                # get sources from data using DAO
+                sources = obs.get_dao()
+
+                # turn QTable into an xyls hdu
+                xyls = obs.get_sources_xyls(sources)
+
+                if make_plots:
+                    source_plot(data=obs.data, sources=sources, outdir=self.plotdir, name=f"source_plot_{obs.name}")
             
             # make file and write xyls
             os.makedirs(os.path.dirname(out_xyls), exist_ok=True)
@@ -151,15 +172,21 @@ class Astrometry():
                 
 
 
-    def get_solutions(self, xyls=False, fwhm=10, sigma=10, use_existing=False, make_plots=False, scale=None, degree=1):
+    def get_solutions(self, xyls=False, fwhm=10, sigma=10, use_segmentation=False, use_existing=False, make_plots=False, scale=None, degree=1):
 
-        if not xyls and self.masked:
-            print("xyls=False is incompatible with data that has been masked.\n" +
-                  "This is to ensure consistency between data and wcs.\n")
-            exit
+        if not xyls:
+            if self.masked:
+                print("xyls=False is incompatible with data that has been masked.\n" +
+                    "This is to ensure consistency between data and wcs.\n")
+                exit
 
-        if xyls:
-            self.get_xyls(fwhm, sigma, use_existing, make_plots=make_plots)
+            if use_segmentation:
+                print("xyls=False is incompatible with use_segmentation.\n" +
+                    "use_segmentation has been set to False.")
+                use_segmentation = False
+
+        else:
+            self.get_xyls(fwhm, sigma, use_segmentation=use_segmentation, use_existing=use_existing, make_plots=make_plots)
 
         self.get_plate_solve(xyls, use_existing, scale=scale)
 
@@ -174,13 +201,16 @@ class Astrometry():
             
 
     def validate_fits(self, make_plots=False):
+        residuals = []
         for obs in tqdm(self.observations, total=self.total_count, desc="Validating Fits"):
             if obs.success == False:
                 continue
             
-            dra_arcsec, ddec_arcsec, dx_pix, dy_pix = fit_validator(obs.projection, obs.corr)
+            residual = fit_validator(obs.projection, obs.corr)
 
-            print(dra_arcsec, ddec_arcsec, dx_pix, dy_pix)
+            residuals.append(residual)
+        if make_plots:
+            residual_plot(residuals=residuals, outdir=self.plotdir)
         
     
     def collect_sources(self):
@@ -236,7 +266,9 @@ class Astrometry():
 
 
     def track_objects(self, ids, rad=10, make_plots=False, use_jpl=False, coordinate=None, stationary_error=None, prediction_error=None):
-        positions = {id: [] for id in ids}
+        positions_g = {id: [] for id in ids}
+        positions_m = {id: [] for id in ids}
+        positions_d = {id: [] for id in ids}
 
         if not use_jpl and not coordinate:
             full_chains = self.auto_tracker(stationary_error=stationary_error, prediction_error=prediction_error)
@@ -268,22 +300,48 @@ class Astrometry():
 
             for id, coord in ephem.items():
                 x, y = obs.eq_to_px(coord)
-                print(x,y)
+                
+                # make aperture at predicted position
                 ap = CircularAperture((x,y), rad)
 
+                # get observation (x_img, y_img) outputs from centroids
                 g = obs.Gaussean2D_centroid(ap)
                 m = obs.Moffat2D_centroid(ap)
                 dao = obs.dao_centroid(ap)
 
-                all_px = np.array([coords for coords in zip(g,m,dao)])
-
+                # for plotting: add predicted and dao output to relevant lists
                 pred_pos.append((x,y))
                 fit_pos.append(dao)
+                # for plotting: make array of form [(x_1, x_2, x_3), (y_1, y_2, y_3)]
+                all_px = np.array([coords for coords in zip(g,m,dao)])
 
-                positions[id].append(SkyCoord([obs.px_to_eq(xy[0], xy[1]) for xy in [g,m,dao]]))
+                # add centroid results to relevant positions dicts
+                positions_g[id].append(SkyCoord(obs.px_to_eq(g[0], g[1])))
+                positions_m[id].append(SkyCoord(obs.px_to_eq(m[0], m[1])))
+                positions_d[id].append(SkyCoord(obs.px_to_eq(dao[0], dao[1])))
 
             if make_plots:
                 fits_plot(data=obs.data, wcs=obs.wcs, outdir=self.plotdir, name=f"track_results_{obs.name}", pred_xy=pred_pos, fit_xy=fit_pos)
                 centroid_test_plot(data=obs.data, ap=ap, centroid_results=all_px, outdir=self.plotdir, name=f"cent_fit_{obs.name}")
 
-        return positions
+        return positions_g, positions_m, positions_d
+
+    
+
+
+def residuals_from_line(positions, degree=1):
+
+    line = models.Polynomial1D(degree=degree)
+
+    fitter = fitting.LinearLSQFitter()
+
+    all_ra = [coord.ra.deg for coord in list(positions.values())[0]]
+    all_dec = [coord.dec.deg for coord in list(positions.values())[0]]
+
+    ra_fit_line = fitter(line, x=all_dec, y=all_ra)
+    dec_fit_line = fitter(line, x=all_ra, y=all_dec)
+
+    ra_residuals = [((coord.ra.deg*u.deg - ra_fit_line(coord.dec.deg)*u.deg).to(u.arcsec), coord.dec.deg) for coord in list(positions.values())[0]]
+    dec_residuals = [((coord.dec.deg*u.deg - dec_fit_line(coord.ra.deg)*u.deg).to(u.arcsec), coord.ra.deg) for coord in list(positions.values())[0]]
+
+    return (ra_residuals, dec_residuals)
