@@ -333,6 +333,7 @@ class Astrometry():
 
             # skip frames with a failed track (coord == None)
             if not coord:
+                obs.success = False
                 continue
 
             pred_pos = []
@@ -364,8 +365,8 @@ class Astrometry():
         return positions_g, positions_m
     
 
-    def to_mpc(self, positions, packed_desig, filter, obs_code, mp_number=None, discovery=None, note1=None, note2=None):
-        mpc = str
+    def to_mpc(self, positions, packed_desig, filter, obs_code, mp_number="     ", discovery=False, note1=" ", note2=" "):
+        mpc = ""
         offset = 0
 
         for i, obs in tqdm(enumerate(self.observations), total=len(self.observations), desc="Writing observations to 80-column format"):
@@ -378,7 +379,6 @@ class Astrometry():
             
 
             mpc += eighty_column(packed_desig=packed_desig,
-                                 discovery=discovery,
                                  utc=self.midtime(obs.header),
                                  coord=positions[i-offset],
                                  mag=mag,
@@ -389,7 +389,7 @@ class Astrometry():
                                  note1=note1,
                                  note2=note2) + "\n"
             
-            return mpc
+        return mpc
             
 
 
@@ -420,15 +420,15 @@ def _default_midtime(header):
     return utc + offset
 
 def eighty_column(packed_desig, # cols 6-12 (7)
+                  packed_number, # cols 1-5 (5)
+                  discovery, # col 13 (1)
+                  note1,  # col 14 (1)
+                  note2, # col 15 (1))
                   utc, # cols 16-32 (17)
                   coord, # cols 33-56
                   mag,
                   band, 
-                  obs_code,
-                  packed_number = "     ", # cols 1-5 (5)
-                  discovery = False, # col 13 (1)
-                  note1 = " ",  # col 14 (1)
-                  note2 = " "): # col 15 (1))
+                  obs_code):
     
     assert len(packed_number) == 5
     assert len(packed_desig) == 7
@@ -436,7 +436,7 @@ def eighty_column(packed_desig, # cols 6-12 (7)
     assert len(note1) == 1 and len(note2) == 1
     assert isinstance(utc, Time)
     assert isinstance(coord, SkyCoord)
-    assert len(str(mag)) == 4 and type(mag) == float
+    assert len(f"{mag:4.1f}") == 4 and type(mag) == float
     assert len(band) == 1
     assert len(str(obs_code)) == 3 and type(obs_code) == int
     
@@ -448,8 +448,6 @@ def eighty_column(packed_desig, # cols 6-12 (7)
     jd = utc.utc.jd
     day_frac = jd % 1
     mpc_time = utc.utc.strftime("%Y %m %d.") + f"{day_frac:.6f}"[2:]
-
-    print(mpc_time)
 
     ra = coord.ra.to_string(unit=u.hour, sep=" ", pad=True, precision=2)
     dec = coord.dec.to_string(unit=u.deg, sep=" ", alwayssign=True, pad=True, precision=1)
