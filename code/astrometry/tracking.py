@@ -97,48 +97,72 @@ def cull_stationary(all_sources, tol):
 
     return all_sources
 
-def validity_check(chain, tol, all_times):
+def validity_check(chain, tol, all_times, depth):
+    assert depth >= 3 and type(depth) == int
+
     if len(chain) <= 2:
         # is a source or pair. Always return True
-        return True
+        return True, True
 
-    # define list indices for obs n-2, n-1, and n
-    nm2 = len(chain) - 3
-    nm1 = len(chain) - 2
+    # define pair indices for obs n-depth, n-depth+1, ..., n-1 (depth is number of points compared, min=3)
+    pairs = [(i, i+1) for i in [len(chain) - depth + i for i in range(depth - 1)] if i >= 0][:-1]
     n = len(chain) - 1
 
+    # if no valid pair remains to predict with, return all False
+    if all([not chain[prev] or not chain[curr] for prev, curr in pairs]):
+        return False, False
+
     # get d/dt from n-2 to n-1
-    delta_T21 = (all_times[nm1] - all_times[nm2]).to(u.second)
+    all_predictions = []
+    for prev, curr in pairs:
 
-    dra12, ddec12 = (chain[nm2].spherical_offsets_to(chain[nm1]))
+        # if any part of the prediction is None, predict None
+        if not all([chain[prev], chain[curr], chain[n]]):
+            all_predictions.append(None)
+            continue
 
-    dra12_dt = dra12 / delta_T21
-    ddec12_dt = ddec12 / delta_T21
+        delta_T21 = (all_times[curr] - all_times[prev]).to(u.second)  
 
-    # get deltaT for n-1 to n
-    delta_T23 = (all_times[n] - all_times[nm1]).to(u.second)
+        if delta_T21 < 0.1 * u.second:
+            Warning(f"Delta t between frames {prev} and {curr} is {delta_T21}. If exposures are too quick in succession, autotracking is likely to fail.")
 
-    # predict new ra, dec
-    pred_delta_ra = dra12_dt * delta_T23
-    pred_delta_dec = ddec12_dt * delta_T23
+        dra12, ddec12 = (chain[prev].spherical_offsets_to(chain[curr]))
 
-    # make a skycoord with the predicted ra, dec offsets
-    pred_sc = chain[nm1].spherical_offsets_by(pred_delta_ra, pred_delta_dec)
+        dra12_dt = dra12 / delta_T21
+        ddec12_dt = ddec12 / delta_T21
+
+        # get deltaT for this pair to new link
+        delta_T23 = (all_times[n] - all_times[curr]).to(u.second)
+
+        # predict new ra, dec
+        pred_delta_ra = dra12_dt * delta_T23
+        pred_delta_dec = ddec12_dt * delta_T23
+
+        # make a skycoord with the predicted ra, dec offsets
+        all_predictions.append(chain[curr].spherical_offsets_by(pred_delta_ra, pred_delta_dec))
 
     # get angular sep from true coord to pred coord, return True if small enough
-    offset = pred_sc.separation(chain[n])
-    if offset < tol:
-        return True
+    all_results = []
+    for pred_sc in all_predictions:
+        if not pred_sc:
+            all_results.append(False)
+            continue
+        offset = pred_sc.separation(chain[n])
+        all_results.append(offset < tol)
 
-    # Failed. Return False.
-    return False
+    if any(all_results):
+        return True, True
 
-def movement_search(all_sources, all_times, tolerance):
+    # Failed, but still potentially valid.
+    return True, False
+
+def movement_search(all_sources, all_times, tolerance, depth):
     '''
     
     '''
     # initialize chains with all sources in first observation
     queue = [[source] for source in all_sources[0]]
+    longest = 1
 
     # possible successes
     success = []
@@ -149,17 +173,28 @@ def movement_search(all_sources, all_times, tolerance):
         # get 'oldest' chain on the stack
         curr = queue.pop(0)
 
-        # add new combinations to the queue if they pass filter
-        for source in all_sources[len(curr)]:
+        # add new combinations to the queue if they pass filter, including the skip case
+        for source in list(all_sources[len(curr)]) + [None]:
             new_chain = curr + [source]
+            not_passed = curr + [None]
 
-            valid = validity_check(new_chain, tolerance, all_times)
+            still_candidate, passed = validity_check(new_chain, tolerance, all_times, depth)
 
-            if valid and len(new_chain) == len(all_sources):
-                # completed chain that is valid
+            if still_candidate and len(new_chain) == len(all_sources):
+                # full-length chain that is valid
                 success.append(new_chain)
-            elif valid:
+
+            elif still_candidate and passed:
+                # not full-length, but valid
+                if not_passed in queue:
+                    queue.remove(not_passed)
+                longest = len(new_chain)
                 queue.append(new_chain)
+
+            elif still_candidate and not_passed not in queue and longest != len(not_passed):
+                # not full-length and not completely dead, but no match this time
+                queue.append(not_passed)
+
 
     if success:
         return success

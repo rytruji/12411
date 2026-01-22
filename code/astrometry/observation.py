@@ -170,7 +170,7 @@ class Observation():
 
     def get_segmentation(self, fwhm, threshold):
         bkg_estimator = MedianBackground()
-        bkg = Background2D(self.data, 50, filter_size=(3, 3), bkg_estimator=bkg_estimator)
+        bkg = Background2D(self.data, 50, filter_size=(5, 5), bkg_estimator=bkg_estimator)
         back2d_data = self.data - bkg.background
 
         threshold *= bkg.background_rms
@@ -178,7 +178,7 @@ class Observation():
         kernel = make_2dgaussian_kernel(fwhm, (2 * fwhm) - 1)
         convolved_data = convolve(back2d_data, kernel)
 
-        segment_map = detect_sources(convolved_data, threshold, npixels=10)
+        segment_map = detect_sources(convolved_data, threshold, npixels=10, connectivity=4)
 
         segm_deblend = deblend_sources(convolved_data, segment_map,
                                npixels=10, nlevels=32, contrast=0.001,
@@ -301,18 +301,3 @@ class Observation():
         params = {name: getattr(g_fit, name).value for name in g_fit.param_names}
 
         return (xc, yc)
-
-
-    def dao_centroid(self, ap):
-        mask = ap.to_mask(method="center")
-        values = mask.cutout(self.data, fill_value=np.nan)
-
-        mean, median, std = sigma_clipped_stats(values, sigma=3.0)
-
-        dao = DAOStarFinder(fwhm=self.fwhm, threshold=self.sigma*std)
-        sources = dao(values)
-
-        y0, x0 = mask.bbox.iymin, mask.bbox.ixmin
-
-        sources.sort("mag")
-        return sources["xcentroid"][0] + x0, sources["ycentroid"][0] + y0

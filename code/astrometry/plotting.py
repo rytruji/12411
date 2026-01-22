@@ -86,13 +86,20 @@ def centroid_test_plot(data, ap, centroid_results, outdir, name="centroid_test_p
         cmap="gray_r",
         norm=LogNorm(1, vmax=np.nanmax(data))
     )
+
+    nx, ny = data.shape
     
     mask = ap.to_mask(method="center")
     values = mask.cutout(data, fill_value=np.nan)
     y0, x0, y1, x1 = mask.bbox.iymin, mask.bbox.ixmin, mask.bbox.iymax, mask.bbox.ixmax
 
-    axins = ax.inset_axes(
+    if y0 > ny // 2 and x0 > nx // 2:
         bounds=(0.6, 0.6, 0.35, 0.35)
+    else:
+        bounds=(0.1, 0.1, 0.35, 0.35)
+
+    axins = ax.inset_axes(
+        bounds=bounds
     )
 
     axins.set_xlim(x0, x1)
@@ -249,10 +256,10 @@ def segmentation_plot(data, cat, segment_map, outdir, name="segmentation_plot"):
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 12.5))
 
-    ax1.imshow(data, origin='lower', cmap='grey_r', norm=LogNorm(vmin=1, vmax=np.nanmax(data)))
+    ax1.imshow(data, origin='upper', cmap='grey_r', norm=LogNorm(vmin=1, vmax=np.nanmax(data)))
     ax1.set_title('Background-subtracted Data')
 
-    ax2.imshow(segment_map, origin='lower', cmap=segment_map.cmap,
+    ax2.imshow(segment_map, origin='upper', cmap=segment_map.cmap,
             interpolation='nearest')
     ax2.set_title('Segmentation Image')
 

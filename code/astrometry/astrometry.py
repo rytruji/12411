@@ -41,7 +41,7 @@ class Astrometry():
         self.masked = False
 
         if midtime_format:
-            assert type(midtime_format) == function
+            assert type(midtime_format) == type(_default_midtime)
             self.midtime = midtime_format
         else:
             self.midtime = _default_midtime
@@ -56,6 +56,7 @@ class Astrometry():
             # collect all files in datadir and recurvisely call extend
             new_files = glob.glob(os.path.join(self.datadir, "*.fits").replace("\\","/"))
             filenames = [os.path.basename(f) for f in new_files]
+            assert len(filenames) != 0
             self.extend(filenames)
 
         # must be a filename, create obs instance using its path
@@ -259,7 +260,7 @@ class Astrometry():
 
 
 
-    def auto_tracker(self, stationary_error, prediction_error, threshold, fwhm, make_plots=False):
+    def auto_tracker(self, stationary_error, prediction_error, threshold, fwhm, depth, make_plots=False):
         '''
         Docstring for auto_tracker
 
@@ -274,7 +275,7 @@ class Astrometry():
         '''
         all_sources, all_times = self.collect_sources(threshold=threshold, fwhm=fwhm, make_plots=make_plots)
         culled_sources = cull_stationary(all_sources, stationary_error)
-        chains = movement_search(culled_sources, all_times, prediction_error)
+        chains = movement_search(culled_sources, all_times, prediction_error, depth)
         return(chains)
     
 
@@ -291,7 +292,7 @@ class Astrometry():
 
 
     def track_objects(self, rad=10, make_plots=False, jpl_id=None, coordinate=None,
-                      stationary_error=None, prediction_error=None, threshold=3, fwhm=3):
+                      stationary_error=None, prediction_error=None, threshold=3, fwhm=3, depth=3):
         
         # initialize tracker variables as None
         tracker = None
@@ -302,26 +303,37 @@ class Astrometry():
                                             prediction_error=prediction_error, 
                                             threshold=threshold, 
                                             fwhm=fwhm, 
-                                            make_plots=make_plots)
+                                            make_plots=make_plots,
+                                            depth=depth)
             if not full_chains:
                 print("Auto Tracking failed. Switching to manual linear tracking...")
                 tracker = linear_tracker(self.datadir, self.observations[0], self.observations[-1])
                 
         
         # initialize empty positions
-        positions_g, positions_m, positions_d = [[]]*3
+        positions_g, positions_m = [], []
+
+        # temp soln for failed frames
+        offset = 0
 
         for i, obs in tqdm(enumerate(self.observations), total=self.total_count, desc="Tracking"):
             
             # skip frames with a failed astrometric solution
-            if not obs.success: continue
+            if not obs.success:
+                offset += 1
+                continue
 
             coord = self._coord_discrim(obs=obs, 
-                                        i=i, 
+                                        i=i-offset, 
                                         jpl_id=jpl_id, 
                                         coordinate=coordinate, 
                                         full_chains=full_chains, 
                                         tracker=tracker)
+
+
+            # skip frames with a failed track (coord == None)
+            if not coord:
+                continue
 
             pred_pos = []
             fit_pos = []
@@ -334,26 +346,54 @@ class Astrometry():
             # get observation (x_img, y_img) outputs from centroids
             g = obs.Gaussean2D_centroid(ap)
             m = obs.Moffat2D_centroid(ap)
-            dao = obs.dao_centroid(ap)
 
             # for plotting: add predicted and dao output to relevant lists
             pred_pos.append((x,y))
-            fit_pos.append(dao)
+            fit_pos.append(m)
             # for plotting: make array of form [(x_1, x_2, x_3), (y_1, y_2, y_3)]
-            all_px = np.array([coords for coords in zip(g,m,dao)])
+            all_px = np.array([coords for coords in zip(g,m)])
 
             # add centroid results to relevant positions dicts
             positions_g.append(SkyCoord(obs.px_to_eq(g[0], g[1])))
             positions_m.append(SkyCoord(obs.px_to_eq(m[0], m[1])))
-            positions_d.append(SkyCoord(obs.px_to_eq(dao[0], dao[1])))
 
             if make_plots:
                 fits_plot(data=obs.data, wcs=obs.wcs, outdir=self.plotdir, name=f"track_results_{obs.name}", pred_xy=pred_pos, fit_xy=fit_pos)
                 centroid_test_plot(data=obs.data, ap=ap, centroid_results=all_px, outdir=self.plotdir, name=f"cent_fit_{obs.name}")
 
-        return positions_g, positions_m, positions_d
-
+        return positions_g, positions_m
     
+
+    def to_mpc(self, positions, packed_desig, filter, obs_code, mp_number=None, discovery=None, note1=None, note2=None):
+        mpc = str
+        offset = 0
+
+        for i, obs in tqdm(enumerate(self.observations), total=len(self.observations), desc="Writing observations to 80-column format"):
+            if not obs.success:
+                offset += 1
+                continue
+
+            # TEMPORARY:
+            mag = 0.0
+            
+
+            mpc += eighty_column(packed_desig=packed_desig,
+                                 discovery=discovery,
+                                 utc=self.midtime(obs.header),
+                                 coord=positions[i-offset],
+                                 mag=mag,
+                                 band=filter,
+                                 obs_code=obs_code,
+                                 packed_number=mp_number,
+                                 discovery=discovery,
+                                 note1=note1,
+                                 note2=note2) + "\n"
+            
+            return mpc
+            
+
+
+
 
 
 def residuals_from_line(positions, degree=1):
@@ -378,3 +418,49 @@ def _default_midtime(header):
     utc = Time(header.get("DATE-OBS"), scale='utc') 
     offset = (float(header.get("EXPTIME")) / 2) * u.second
     return utc + offset
+
+def eighty_column(packed_desig, # cols 6-12 (7)
+                  utc, # cols 16-32 (17)
+                  coord, # cols 33-56
+                  mag,
+                  band, 
+                  obs_code,
+                  packed_number = "     ", # cols 1-5 (5)
+                  discovery = False, # col 13 (1)
+                  note1 = " ",  # col 14 (1)
+                  note2 = " "): # col 15 (1))
+    
+    assert len(packed_number) == 5
+    assert len(packed_desig) == 7
+    assert type(discovery) == bool
+    assert len(note1) == 1 and len(note2) == 1
+    assert isinstance(utc, Time)
+    assert isinstance(coord, SkyCoord)
+    assert len(str(mag)) == 4 and type(mag) == float
+    assert len(band) == 1
+    assert len(str(obs_code)) == 3 and type(obs_code) == int
+    
+    if discovery:
+        asterisk = "*"
+    else:
+        asterisk = " "
+
+    jd = utc.utc.jd
+    day_frac = jd % 1
+    mpc_time = utc.utc.strftime("%Y %m %d.") + f"{day_frac:.6f}"[2:]
+
+    print(mpc_time)
+
+    ra = coord.ra.to_string(unit=u.hour, sep=" ", pad=True, precision=2)
+    dec = coord.dec.to_string(unit=u.deg, sep=" ", alwayssign=True, pad=True, precision=1)
+    coord_str = f"{ra} {dec}"
+    
+    mag_str = f"{mag:4.1f}"
+
+    out = (
+        f"{packed_number}{packed_desig}{asterisk}{note1}{note2}{mpc_time}{coord_str:24s}         {mag_str} {band}      {obs_code}"
+    )
+
+    assert len(out) == 80, len(out)
+
+    return out

@@ -78,6 +78,10 @@ def master_flat(outdir, flat_files, biasdir, name="master_flat"):
 
     normalized_flats = np.array([flat / np.median(flat) for flat in unbiased_flats])
 
-    out = f.PrimaryHDU(np.median(normalized_flats, axis=0))
+    master_flat = np.median(normalized_flats, axis=0)
+
+    master_flat[master_flat <= 0.1] = 1
+
+    out = f.PrimaryHDU(master_flat)
 
     out.writeto(os.path.join(outdir, f"{name}.fits").replace("\\","/"), overwrite=True)
