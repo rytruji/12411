@@ -180,9 +180,10 @@ def movement_search(all_sources, all_times, tolerance, depth):
 
             still_candidate, passed = validity_check(new_chain, tolerance, all_times, depth)
 
-            if still_candidate and len(new_chain) == len(all_sources):
+            if still_candidate and passed and len(new_chain) == len(all_sources):
                 # full-length chain that is valid
                 success.append(new_chain)
+                return success
 
             elif still_candidate and passed:
                 # not full-length, but valid
@@ -195,8 +196,4 @@ def movement_search(all_sources, all_times, tolerance, depth):
                 # not full-length and not completely dead, but no match this time
                 queue.append(not_passed)
 
-
-    if success:
-        return success
-    else:
-        return None
+    return None

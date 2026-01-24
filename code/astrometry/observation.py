@@ -5,6 +5,8 @@
 #########################################################################################################
 
 from .projection import Projection
+from .photometry import Photometry
+from .query import match_to_catalog, G_filter_transform
 
 from astropy.stats import sigma_clipped_stats
 from astropy.io import fits as f
@@ -47,6 +49,8 @@ class Observation():
         self.sigma=sigma
         self.fwhm=fwhm
         self.verbose=verbose
+        self.xyls=None
+        self.phot=Photometry()
 
         self.success = True
     
@@ -77,6 +81,14 @@ class Observation():
             (1) None
         '''
         self.corr = Table.read(corr)
+
+
+    def set_xyls(self, xyls):
+        '''
+        Sets self.xyls to the given corr table. Returns:
+            (1) None
+        '''
+        self.xyls = Table.read(xyls)
 
 
     def set_mask(self, x_min, x_max, y_min, y_max):
@@ -219,7 +231,6 @@ class Observation():
         hdu.header["IMAGEW"] = nx
         hdu.header["IMAGEH"] = ny
 
-        self.xyls = hdu
         return self.xyls
     
     

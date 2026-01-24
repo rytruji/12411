@@ -7,12 +7,13 @@
 from .observation import Observation
 from .tracking import cull_stationary, movement_search, linear_tracker
 from .projection import fit_validator
-from .plotting import fits_plot, centroid_test_plot, source_plot, residual_plot, segmentation_plot
+from .plotting import *
+from .query import gaia_conical, match_to_catalog
+from .statistics import outlier_rejection, eq_residuals_from_line
 
 from astropy.coordinates import SkyCoord
 from astropy.io import fits as f
 from astropy.time import Time
-from astropy.modeling import models, fitting
 import astropy.units as u
 
 from photutils.aperture import CircularAperture
@@ -119,6 +120,7 @@ class Astrometry():
 
             # skip if already exists (and not overwriting)
             if os.path.exists(out_xyls) and use_existing:
+                obs.set_xyls(out_xyls)
                 continue
 
             obs.sigma = sigma
@@ -136,6 +138,7 @@ class Astrometry():
             # make file and write xyls
             os.makedirs(os.path.dirname(out_xyls), exist_ok=True)
             xyls.writeto(out_xyls, overwrite=True)
+            obs.set_xyls(out_xyls)
 
         
     def get_plate_solve(self, xyls=False, use_existing=False, scale=None, silent=False):
@@ -275,7 +278,9 @@ class Astrometry():
         '''
         all_sources, all_times = self.collect_sources(threshold=threshold, fwhm=fwhm, make_plots=make_plots)
         culled_sources = cull_stationary(all_sources, stationary_error)
+        print("Attempting Movement Search...")
         chains = movement_search(culled_sources, all_times, prediction_error, depth)
+        print(f"Done. The number of identified tracks was {len(chains)}.")
         return(chains)
     
 
@@ -289,10 +294,28 @@ class Astrometry():
         else:
             utc = self.midtime(obs.header)
             return tracker(utc)
+        
+
+    def reject_by_line(self, positions, degree=3):
+        residuals = eq_residuals_from_line(positions, degree=degree)
+
+        rejection = outlier_rejection(residuals[0]) | outlier_rejection(residuals[1])
+
+        offset = 0
+        for i, obs in enumerate(self.observations):
+            if not obs.success:
+                offset += 1
+                continue
+            if rejection[i-offset]:
+                obs.success = False
+
+        positions = np.array(positions)[~rejection]
+
+        return positions
 
 
     def track_objects(self, rad=10, make_plots=False, jpl_id=None, coordinate=None,
-                      stationary_error=None, prediction_error=None, threshold=3, fwhm=3, depth=3):
+                      stationary_error=None, prediction_error=None, threshold=3, fwhm=3, depth=3, rejection=False):
         
         # initialize tracker variables as None
         tracker = None
@@ -362,10 +385,54 @@ class Astrometry():
                 fits_plot(data=obs.data, wcs=obs.wcs, outdir=self.plotdir, name=f"track_results_{obs.name}", pred_xy=pred_pos, fit_xy=fit_pos)
                 centroid_test_plot(data=obs.data, ap=ap, centroid_results=all_px, outdir=self.plotdir, name=f"cent_fit_{obs.name}")
 
+        if rejection:
+            positions_g = self.reject_by_line(positions_g)
+            positions_m = self.reject_by_line(positions_m)
+
         return positions_g, positions_m
     
 
-    def to_mpc(self, positions, packed_desig, filter, obs_code, mp_number="     ", discovery=False, note1=" ", note2=" "):
+    def get_magnitudes(self, positions, transform, make_plots=False):
+        offset = 0
+    
+        mags = []
+
+        print("Requesting Catalog Stars from Gaia...")
+        obs = self.observations[len(self.observations) // 2]
+        center = SkyCoord(obs.wcs.wcs.crval[0]*u.deg, obs.wcs.wcs.crval[1]*u.deg)
+        r = gaia_conical(coordinate=center, transform=transform)
+        
+        for i, obs in tqdm(enumerate(self.observations), total=len(self.observations), desc="Performing photometry to get magnitudes"):
+            if not obs.success:
+                offset += 1
+                continue
+
+            matches = match_to_catalog(obs, r)
+
+            highest_mag_coord = matches["x"][np.argmin(matches["mag"])], matches["y"][np.argmin(matches["mag"])]
+
+            radii, curve = obs.phot.get_best_radius(obs.data, highest_mag_coord)
+
+            zero, std = obs.phot.get_mag_zero(obs.data, matches, idx=obs.name)
+
+            if make_plots:
+                xy_matches = [(x,y) for x,y in zip(matches["x"], matches["y"])]
+                fits_plot(obs.data, obs.wcs, self.plotdir, name=f"matches_{obs.name}", fit_xy=xy_matches)
+
+                curve_of_growth(radii, curve, obs.phot.best_rad, self.plotdir, name=f"curve_of_growth_{obs.name}")
+
+            target_position_xy = obs.eq_to_px(positions[i-offset])
+
+            target_flux = obs.phot.flux_from_aperture_annulus(obs.data, target_position_xy)[0]
+
+            inst_mag = -2.5 * np.log10(target_flux)
+            stand_mag = inst_mag - zero
+            mags.append(stand_mag)
+
+        return np.array(mags)
+
+
+    def to_mpc(self, positions, packed_desig, filter, obs_code, mags, mp_number="     ", discovery=False, note1=" ", note2=" ", write_out=True):
         mpc = ""
         offset = 0
 
@@ -373,15 +440,12 @@ class Astrometry():
             if not obs.success:
                 offset += 1
                 continue
-
-            # TEMPORARY:
-            mag = 0.0
             
 
             mpc += eighty_column(packed_desig=packed_desig,
                                  utc=self.midtime(obs.header),
                                  coord=positions[i-offset],
-                                 mag=mag,
+                                 mag=mags[i-offset],
                                  band=filter,
                                  obs_code=obs_code,
                                  packed_number=mp_number,
@@ -389,29 +453,12 @@ class Astrometry():
                                  note1=note1,
                                  note2=note2) + "\n"
             
+        if write_out:
+            outdir = os.path.join(self.datadir, "mpc_out.txt").replace("\\", "/")
+            with open(outdir, "w") as txt:
+                txt.write(mpc)
+        
         return mpc
-            
-
-
-
-
-
-def residuals_from_line(positions, degree=1):
-
-    line = models.Polynomial1D(degree=degree)
-
-    fitter = fitting.LinearLSQFitter()
-
-    all_ra = [coord.ra.deg for coord in positions]
-    all_dec = [coord.dec.deg for coord in positions]
-
-    ra_fit_line = fitter(line, x=all_dec, y=all_ra)
-    dec_fit_line = fitter(line, x=all_ra, y=all_dec)
-
-    ra_residuals = [((coord.ra.deg*u.deg - ra_fit_line(coord.dec.deg)*u.deg).to(u.arcsec), coord.dec.deg) for coord in positions]
-    dec_residuals = [((coord.dec.deg*u.deg - dec_fit_line(coord.ra.deg)*u.deg).to(u.arcsec), coord.ra.deg) for coord in positions]
-
-    return (ra_residuals, dec_residuals)
 
 
 def _default_midtime(header):
@@ -436,9 +483,12 @@ def eighty_column(packed_desig, # cols 6-12 (7)
     assert len(note1) == 1 and len(note2) == 1
     assert isinstance(utc, Time)
     assert isinstance(coord, SkyCoord)
-    assert len(f"{mag:4.1f}") == 4 and type(mag) == float
+    assert len(f"{mag:2.1f}") == 4 and isinstance(mag, float)
     assert len(band) == 1
-    assert len(str(obs_code)) == 3 and type(obs_code) == int
+    assert len(str(obs_code)) == 3 and isinstance(obs_code, int)
+
+    packed_full = packed_number + packed_desig
+    packed_full = f"{packed_full:<12}"
     
     if discovery:
         asterisk = "*"
@@ -448,16 +498,30 @@ def eighty_column(packed_desig, # cols 6-12 (7)
     jd = utc.utc.jd
     day_frac = jd % 1
     mpc_time = utc.utc.strftime("%Y %m %d.") + f"{day_frac:.6f}"[2:]
+    mpc_time = f"{mpc_time:<17}"[:17]
 
     ra = coord.ra.to_string(unit=u.hour, sep=" ", pad=True, precision=2)
     dec = coord.dec.to_string(unit=u.deg, sep=" ", alwayssign=True, pad=True, precision=1)
-    coord_str = f"{ra} {dec}"
     
-    mag_str = f"{mag:4.1f}"
+    ra = f"{ra:<12}"[:12]
+    dec = f"{dec:<12}"[:12]
+    
+    magband = f"{mag:>4.1f} {band:<1}"
 
     out = (
-        f"{packed_number}{packed_desig}{asterisk}{note1}{note2}{mpc_time}{coord_str:24s}         {mag_str} {band}      {obs_code}"
+        f"{packed_full}"
+        f"{asterisk}"
+        f"{note1}{note2}"
+        f"{mpc_time}"
+        f"{ra}"
+        f"{dec}"    
+        f"{' '*9}"     
+        f"{magband}" 
+        f"{' '*6}" 
+        f"{obs_code}"
     )
+
+    print(out)
 
     assert len(out) == 80, len(out)
 
