@@ -5,8 +5,8 @@
 #########################################################################################################
 
 from .projection import Projection
+
 from .photometry import Photometry
-from .query import match_to_catalog, G_filter_transform
 
 from astropy.stats import sigma_clipped_stats
 from astropy.io import fits as f
@@ -142,7 +142,7 @@ class Observation():
         return self._clipped_cache
 
 
-    def get_dao(self, mask_bounds=None, make_plot=False):
+    def get_dao(self, mask_bounds=None):
         '''
         Docstring for get_dao_mask
 
@@ -198,10 +198,10 @@ class Observation():
         
         cat = SourceCatalog(self.data, segm_deblend, convolved_data=convolved_data)
 
-        return cat, segm_deblend
+        return cat, segm_deblend, convolved_data
 
 
-    def get_sources_xyls(self, sources, name=None, outdir=None):
+    def get_sources_xyls(self, sources):
         '''
         Docstring for write_sources_xyls
 
@@ -231,7 +231,7 @@ class Observation():
         hdu.header["IMAGEW"] = nx
         hdu.header["IMAGEH"] = ny
 
-        return self.xyls
+        return hdu
     
     
     def get_projection(self, degree):

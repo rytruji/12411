@@ -18,10 +18,11 @@ def outlier_rejection(values):
     '''
     Docstring for outlier_rejection
 
-    Determines which points in a the given set are outliers using the Chauvenet criterion. Ignores values that are None.
+    Determines which points in a the given set are outliers using the Chauvenet criterion. 
+    None or missing values are automatically outliers.
 
     Returns:
-        (1) Numpy Array, chauvenet mask for outliers, where True is an outlier. None is automatically an outlier.
+        (1) Numpy Array, chauvenet mask for outliers, where True is an outlier.
     
     :param values: Array-like, values to perform outlier rejection with.
     '''

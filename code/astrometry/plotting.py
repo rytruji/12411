@@ -25,45 +25,46 @@ from matplotlib.gridspec import GridSpec
 
 def residual_plot(residuals, outdir, name="residual_plot"):
     print("Plotting residuals...")
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 8), constrained_layout=True)
+    fig, ax1 = plt.subplots(figsize=(5, 5), constrained_layout=True)
 
     cmap = plt.cm.viridis
     n = len(residuals)
 
-    for i, (dra_arcsec, ddec_arcsec, dy_pix, dx_pix) in enumerate(residuals):
+    for i, (dra_arcsec, ddec_arcsec) in enumerate(residuals):
         color = cmap(i / max(n - 1, 1))
         ax1.scatter(dra_arcsec, ddec_arcsec, s=10, color=color, alpha=0.7)
-        ax2.scatter(dx_pix, dy_pix, s=10, color=color, alpha=0.7)
 
     ax1.axhline(0, linewidth=1)
     ax1.axvline(0, linewidth=1)
     ax1.set_xlabel(r"$\Delta$RA (arcsec)")
     ax1.set_ylabel(r"$\Delta$Dec (arcsec)")
-    ax1.set_title("field to index")
+    ax1.set_xlim((-1, 1))
+    ax1.set_ylim((-0.8, 0.8))
+    ax1.set_title("Residuals of Transformation from Field to Catalog Coordinate")
     ax1.set_aspect("equal", adjustable="box")
-
-    ax2.axhline(0, linewidth=1)
-    ax2.axvline(0, linewidth=1)
-    ax2.set_xlabel(r"$\Delta y$ (pix)")
-    ax2.set_ylabel(r"$\Delta x$ (pix)")
-    ax2.set_title("index to field")
-    ax2.set_aspect("equal", adjustable="box")
 
     os.makedirs(os.path.join(outdir, "residuals").replace("\\","/"), exist_ok=True)
     plt.savefig(os.path.join(outdir, "residuals", f"{name}.pdf").replace("\\","/"), dpi=300, bbox_inches="tight")
+    plt.savefig(os.path.join(outdir, "residuals", f"{name}.png").replace("\\","/"), dpi=300, bbox_inches="tight")
     plt.close(fig)
 
     print("Done.")
 
 
 
-def source_plot(data, sources, outdir, name="detected_sources"):
+def source_plot(obs, sources, outdir, name="detected_sources"):
     fig = plt.figure(figsize=(14, 8.0))
     ax = fig.add_subplot()
 
-    im = ax.imshow(data, cmap="gray_r", norm='log')
-    cbar = plt.colorbar(im, ax=ax)
-    cbar.set_label('Counts')
+    im = ax.imshow(
+        obs.data,
+        cmap="gray_r",
+        norm=LogNorm(vmin=1, vmax=np.nanmax(obs.data))
+    )
+
+    # colorbar matched to the y-extent of ax
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("Counts")
 
     positions = np.transpose((sources['xcentroid'], sources['ycentroid']))
 
@@ -73,24 +74,45 @@ def source_plot(data, sources, outdir, name="detected_sources"):
     
     os.makedirs(os.path.join(outdir, "source_plots").replace("\\","/"), exist_ok=True)
     plt.savefig(os.path.join(outdir, "source_plots", f"{name}.pdf").replace("\\","/"), dpi=300, bbox_inches="tight")
+    plt.savefig(os.path.join(outdir, "source_plots", f"{name}.png").replace("\\","/"), dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
-
-def centroid_test_plot(data, ap, centroid_results, outdir, name="centroid_test_plot"):
+def centroid_test_plot(obs, ap, centroid_results, outdir, name="centroid_test_plot"):
     fig = plt.figure()
-    ax = fig.add_subplot()
+    ax = fig.add_subplot(projection=obs.wcs)
 
-    ax.imshow(
-        data,
+    im = ax.imshow(
+        obs.data,
         cmap="gray_r",
-        norm=LogNorm(1, vmax=np.nanmax(data))
+        norm=LogNorm(vmin=1, vmax=np.nanmax(obs.data))
     )
 
-    nx, ny = data.shape
+    ra  = ax.coords[0]   # RA axis
+    dec = ax.coords[1]   # Dec axis
+
+    ra.set_major_formatter('hh:mm:ss')
+    dec.set_major_formatter('dd:mm:ss')
+
+    # Turn on and tune minor ticks
+    ra.display_minor_ticks(True)
+    dec.display_minor_ticks(True)
+
+    # How many minor intervals per major tick
+    ra.set_minor_frequency(4)
+    dec.set_minor_frequency(4)
+    
+    ra.set_ticklabel(exclude_overlapping=False, simplify=False)
+    dec.set_ticklabel(exclude_overlapping=False, simplify=False)
+
+    # Axis labels
+    ra.set_axislabel("RA (HH MM SS)")
+    dec.set_axislabel("Dec (DD MM SS)")
+
+    nx, ny = obs.data.shape
     
     mask = ap.to_mask(method="center")
-    values = mask.cutout(data, fill_value=np.nan)
+    values = mask.cutout(obs.data, fill_value=np.nan)
     y0, x0, y1, x1 = mask.bbox.iymin, mask.bbox.ixmin, mask.bbox.iymax, mask.bbox.ixmax
 
     if y0 > ny // 2 and x0 < nx // 2:
@@ -113,6 +135,9 @@ def centroid_test_plot(data, ap, centroid_results, outdir, name="centroid_test_p
         origin="upper"
     )
 
+    axins.get_xaxis().set_ticks([])
+    axins.get_yaxis().set_ticks([])
+
     x_pos, y_pos = centroid_results
 
     x_pos = np.array(x_pos)
@@ -123,6 +148,8 @@ def centroid_test_plot(data, ap, centroid_results, outdir, name="centroid_test_p
     axins.scatter(x_pos, y_pos, marker="x", c="b")
 
     ax.indicate_inset_zoom(axins, edgecolor="black")
+
+    ax.set_title("Centroids on Asteroid 2026 AX2")
 
     os.makedirs(os.path.join(outdir, "centroids").replace("\\","/"), exist_ok=True)
     plt.savefig(os.path.join(outdir, "centroids", f"{name}.pdf").replace("\\","/"), dpi=300, bbox_inches="tight")
@@ -181,7 +208,7 @@ def fits_plot(data, wcs, outdir, name="fits_plot", pred_xy=None, fit_xy=None):
     plt.close(fig)
 
 def position_plot(positions, residuals, outdir, name="position_plot"):
-    fig = plt.figure(figsize=(10, 10))
+    fig = plt.figure(figsize=(9, 6))
 
     gs = GridSpec(2, 2, fig, width_ratios=[4, 1], height_ratios=[4, 1])
 
@@ -218,28 +245,52 @@ def position_plot(positions, residuals, outdir, name="position_plot"):
     ax_ra.errorbar(ra, dec_offset, yerr=y_err, color="k", fmt="o", capsize=3)
     ax_dec.errorbar(ra_offset, dec, xerr=x_err, color="k", fmt="o", capsize=3)
 
+    ax_ra.set_xlabel("Right Ascension (deg)")
+    ax.set_ylabel("Declination (deg)")
+
+    ax_ra.set_ylabel("Δ Dec (arcsec)")   # change units if needed
+
+    ax_resids.set_xlabel("Δ RA (arcsec)")
+
+    # Optional titles
+    ax.set_title("Measured Positions and Residuals for Asteroid")
+
     os.makedirs(os.path.join(outdir, "positions").replace("\\","/"), exist_ok=True)
     plt.savefig(os.path.join(outdir, "positions", f"{name}.pdf").replace("\\","/"), dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
-def segmentation_plot(data, cat, segment_map, outdir, name="segmentation_plot"):
+def segmentation_plot(data, convolved_data, cat, segment_map, outdir, name="segmentation_plot"):
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 12.5))
+    fig, ax1 = plt.subplots(figsize=(5, 5))
 
-    ax1.imshow(data, origin='upper', cmap='grey_r', norm=LogNorm(vmin=1, vmax=np.nanmax(data)))
+    ax1.imshow(data, origin='upper', cmap='grey_r', norm=LogNorm(vmin=np.nanmin(data), vmax=np.nanmax(data)))
     ax1.set_title('Background-subtracted Data')
+    
+    os.makedirs(os.path.join(outdir, "segmentations").replace("\\","/"), exist_ok=True)
+    plt.savefig(os.path.join(outdir, "segmentations", f"base_data_{name}.png").replace("\\","/"), dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    
+    fig, ax2 = plt.subplots(figsize=(5, 5))
 
     ax2.imshow(segment_map, origin='upper', cmap=segment_map.cmap,
             interpolation='nearest')
     ax2.set_title('Segmentation Image')
 
-    cat.plot_kron_apertures(ax=ax1, color='white', lw=0.5, alpha=0.5)
     cat.plot_kron_apertures(ax=ax2, color='white', lw=0.5, alpha=0.5)
+
+    plt.savefig(os.path.join(outdir, "segmentations", f"segmentation_{name}.png").replace("\\","/"), dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    fig, ax3 = plt.subplots(figsize=(5, 5))
+
+    ax3.imshow(convolved_data, origin='upper', cmap='grey_r', norm=LogNorm(vmin=np.nanmin(data), vmax=np.nanmax(data)))
+    ax3.set_title('Gaussian-Convolved Data')
     
     os.makedirs(os.path.join(outdir, "segmentations").replace("\\","/"), exist_ok=True)
-    plt.savefig(os.path.join(outdir, "segmentations", f"{name}.pdf").replace("\\","/"), dpi=300, bbox_inches="tight")
+    plt.savefig(os.path.join(outdir, "segmentations", f"convolved_{name}.png").replace("\\","/"), dpi=300, bbox_inches="tight")
     plt.close(fig)
+
 
 def curve_of_growth(radii, curve, best_rad, outdir, name="curve_of_growth"):
     fig, ax = plt.subplots(figsize=(8,5))

@@ -5,15 +5,18 @@
 #########################################################################################################
 
 from .observation import Observation
+
 from .tracking import cull_stationary, movement_search, linear_tracker
 from .projection import fit_validator
 from .plotting import *
+
 from .query import gaia_conical, match_to_catalog
 from .statistics import outlier_rejection, eq_residuals_from_line
+from .header import Header
+from .mpc import eighty_column
 
 from astropy.coordinates import SkyCoord
 from astropy.io import fits as f
-from astropy.time import Time
 import astropy.units as u
 
 from photutils.aperture import CircularAperture
@@ -21,6 +24,7 @@ from photutils.aperture import CircularAperture
 import os
 import glob
 import subprocess
+import pickle
 
 import numpy as np
 
@@ -30,22 +34,23 @@ from tqdm import tqdm
 #########################################################################################################
 
 class Astrometry():
-    def __init__(self, dir, lindir, image_names=None, verbose=False, midtime_format=None):
+    def __init__(self, dir, linuxdir, image_names=None, verbose=False, midtime_format=None):
 
         self.datadir = dir
-        self.lindir = lindir
+        self.linuxdir = linuxdir
         self.plotdir = os.path.join(self.datadir, "plots/").replace("\\", "/")
         self.debugdir = os.path.join(self.datadir, "debug/").replace("\\", "/")
+        self.statsdir = os.path.join(self.datadir, "stats/").replace("\\", "/")
+
 
         self.observations = []
         self.verbose = verbose
         self.masked = False
 
         if midtime_format:
-            assert type(midtime_format) == type(_default_midtime)
             self.midtime = midtime_format
         else:
-            self.midtime = _default_midtime
+            self.midtime = Header.default_midtime
 
         self.extend(image_names)
 
@@ -53,7 +58,7 @@ class Astrometry():
     def extend(self, image_names):
 
         # test for directory, call extend on contents if so
-        if not image_names:
+        if image_names is None:
             # collect all files in datadir and recurvisely call extend
             new_files = glob.glob(os.path.join(self.datadir, "*.fits").replace("\\","/"))
             filenames = [os.path.basename(f) for f in new_files]
@@ -75,7 +80,6 @@ class Astrometry():
 
 
     def center_mask_radius(self, rad):
-
         self.masked = True
 
         for obs in tqdm(self.observations, total=self.total_count, desc="Masking Observations"):
@@ -133,7 +137,7 @@ class Astrometry():
             xyls = obs.get_sources_xyls(sources)
 
             if make_plots:
-                source_plot(data=obs.data, sources=sources, outdir=self.plotdir, name=f"source_plot_{obs.name}")
+                source_plot(obs=obs, sources=sources, outdir=self.plotdir, name=f"source_plot_{obs.name}")
             
             # make file and write xyls
             os.makedirs(os.path.dirname(out_xyls), exist_ok=True)
@@ -142,7 +146,7 @@ class Astrometry():
 
         
     def get_plate_solve(self, xyls=False, use_existing=False, scale=None, silent=False):
-        solveddir = os.path.join(self.lindir, "solved").replace("\\","/")
+        solveddir = os.path.join(self.linuxdir, "solved").replace("\\","/")
         os.makedirs(solveddir, exist_ok=True)
 
         for obs in tqdm(self.observations, total=self.total_count, desc="Requesting plate solutions from local Astrometry.net"):
@@ -154,9 +158,9 @@ class Astrometry():
                 continue
 
             if xyls:
-                platedir = os.path.join(self.lindir, f"xyls/{obs.name}.xyls").replace("\\","/")
+                platedir = os.path.join(self.linuxdir, f"xyls/{obs.name}.xyls").replace("\\","/")
             else:
-                platedir = os.path.join(self.lindir, obs.name).replace("\\","/")
+                platedir = os.path.join(self.linuxdir, obs.name).replace("\\","/")
             
             if scale:
                 cmd = f'wsl ~ -e sh -c "solve-field {platedir} --overwrite --dir {solveddir} --no-plots --scale-low {scale-0.05} --scale-high {scale+0.05} --scale-units arcsecperpix"'
@@ -205,13 +209,14 @@ class Astrometry():
                 obs.set_wcs(os.path.join(self.datadir, "solved", obs.name + ".wcs").replace("\\","/"))
                 obs.set_corr(os.path.join(self.datadir, "solved", obs.name + ".corr").replace("\\","/"))
                 obs.get_projection(degree)
-            except:
+            except FileNotFoundError:
                 print(f"Field {obs.name} did not solve successfully and has been skipped.")
                 obs.success = False
             
 
-    def validate_fits(self, make_plots=False):
+    def validate_fits(self, save_stats=True, make_plots=False):
         residuals = []
+        stats = []
         for obs in tqdm(self.observations, total=self.total_count, desc="Validating Fits"):
             if obs.success == False:
                 continue
@@ -219,8 +224,17 @@ class Astrometry():
             residual = fit_validator(obs.projection, obs.corr)
 
             residuals.append(residual)
+
+            stats.append((np.mean(residual[0]), np.std(residual[0]), np.mean(residual[1]), np.std(residual[1])))
         if make_plots:
             residual_plot(residuals=residuals, outdir=self.plotdir)
+
+        stats = np.array(stats)
+        if save_stats:
+            os.makedirs(self.statsdir, exist_ok=True)
+            filepath = os.path.join(self.statsdir, "residuals.pkl").replace("\\", "/")
+            with open(filepath, "wb") as file:
+                pickle.dump(stats, file)
         
     
     def collect_sources(self, fwhm=3, threshold=3, make_plots=False):
@@ -242,25 +256,29 @@ class Astrometry():
                 continue
             
             # get SourceCatalog and deblended segmentation map of data
-            cat, segm_deblend = obs.get_segmentation(fwhm=fwhm, threshold=threshold)
+            cat, segm_deblend, convolved_data = obs.get_segmentation(fwhm=fwhm, threshold=threshold)
             
             # turn cat into QTable that can be used to get source coordinates
             columns = ["xcentroid", "ycentroid"]
             sources = cat.to_table(columns=columns)
 
             if make_plots:
-                segmentation_plot(obs.data, cat, segm_deblend, self.plotdir, name=f"segmentation_plot_{obs.name}")
+                segmentation_plot(obs.data, convolved_data, cat, segm_deblend, self.plotdir, name=f"segmentation_plot_{obs.name}")
 
             # get centroided x, y coords, turn into equatorial
             x_1 = sources["xcentroid"]
             y_1 = sources["ycentroid"]
-            sc = SkyCoord([obs.px_to_eq(x, y) for x, y in zip(x_1, y_1)])    
+            sc = SkyCoord([obs.px_to_eq(x, y) for x, y in zip(x_1, y_1)])
 
             all_sources.append(sc)
             all_times.append(self.midtime(obs.header))
 
         return all_sources, all_times
+    
 
+    def successful_observations(self):
+        all_successful = [obs for obs in self.observations if obs.success]
+        return [(i, obs) for i, obs in enumerate(all_successful)]
 
 
     def auto_tracker(self, stationary_error, prediction_error, threshold, fwhm, depth, make_plots=False):
@@ -276,15 +294,18 @@ class Astrometry():
         :param stationary_error: Angle, max angular separation between sources considered stationary
         :param prediction_error: Angle, max angular offset between predicted and true position of next source in the chain
         '''
-        all_sources, all_times = self.collect_sources(threshold=threshold, fwhm=fwhm, make_plots=make_plots)
+        all_sources, all_times = self.collect_sources(threshold=threshold, fwhm=fwhm, make_plots=False)
+
         culled_sources = cull_stationary(all_sources, stationary_error)
+
         print("Attempting Movement Search...")
         chains = movement_search(culled_sources, all_times, prediction_error, depth)
         print(f"Done. The number of identified tracks was {len(chains)}.")
+
         return(chains)
     
 
-    def _coord_discrim(self, obs, i, jpl_id, coordinate, full_chains, tracker):
+    def _resolve_coord(self, obs, i, jpl_id, coordinate, full_chains, tracker):
         if jpl_id: 
             return obs.get_ephemeris(jpl_id)
         elif coordinate:
@@ -296,26 +317,27 @@ class Astrometry():
             return tracker(utc)
         
 
-    def reject_by_line(self, positions, degree=3):
-        residuals = eq_residuals_from_line(positions, degree=degree)
+    def reject_by_line(self, positions, degree=2, iterations=3):
+        for iter in range(iterations):
+            residuals = eq_residuals_from_line(positions, degree=degree)
+            rejection = outlier_rejection(residuals[0]) | outlier_rejection(residuals[1])
 
-        rejection = outlier_rejection(residuals[0]) | outlier_rejection(residuals[1])
+            temp = 0
+            for _, obs in self.successful_observations():
+                if rejection[temp]:
+                    print(f"Rejected position measured in observation {obs.name} due to outlying residual on iteration {iter}")
+                    obs.success = False
+                temp += 1
 
-        offset = 0
-        for i, obs in enumerate(self.observations):
-            if not obs.success:
-                offset += 1
-                continue
-            if rejection[i-offset]:
-                obs.success = False
+            positions = np.array(positions)[~rejection]
 
-        positions = np.array(positions)[~rejection]
+        self.total_count = len(self.successful_observations())
 
         return positions
 
 
     def track_objects(self, rad=10, make_plots=False, jpl_id=None, coordinate=None,
-                      stationary_error=None, prediction_error=None, threshold=3, fwhm=3, depth=3, rejection=False):
+                      stationary_error=None, prediction_error=None, threshold=3, fwhm=3, depth=3, rejection=False, method="Segmentation"):
         
         # initialize tracker variables as None
         tracker = None
@@ -337,22 +359,15 @@ class Astrometry():
         positions_g, positions_m = [], []
 
         # temp soln for failed frames
-        offset = 0
 
-        for i, obs in tqdm(enumerate(self.observations), total=self.total_count, desc="Tracking"):
+        for i, obs in tqdm(self.successful_observations(), total=self.total_count, desc="Tracking"):
             
-            # skip frames with a failed astrometric solution
-            if not obs.success:
-                offset += 1
-                continue
-
-            coord = self._coord_discrim(obs=obs, 
-                                        i=i-offset, 
+            coord = self._resolve_coord(obs=obs, 
+                                        i=i, 
                                         jpl_id=jpl_id, 
                                         coordinate=coordinate, 
                                         full_chains=full_chains, 
                                         tracker=tracker)
-
 
             # skip frames with a failed track (coord == None)
             if not coord:
@@ -383,17 +398,22 @@ class Astrometry():
 
             if make_plots:
                 fits_plot(data=obs.data, wcs=obs.wcs, outdir=self.plotdir, name=f"track_results_{obs.name}", pred_xy=pred_pos, fit_xy=fit_pos)
-                centroid_test_plot(data=obs.data, ap=ap, centroid_results=all_px, outdir=self.plotdir, name=f"cent_fit_{obs.name}")
+                centroid_test_plot(obs=obs, ap=ap, centroid_results=all_px, outdir=self.plotdir, name=f"cent_fit_{obs.name}")
 
         if rejection:
             positions_g = self.reject_by_line(positions_g)
             positions_m = self.reject_by_line(positions_m)
 
+        if make_plots:
+            print("Plotting Positions and Residuals...")
+            position_plot(positions_g, residuals=eq_residuals_from_line(positions_g, degree=3), outdir=self.plotdir, name="Gaussean_Position_Plot")
+            position_plot(positions_m, residuals=eq_residuals_from_line(positions_m, degree=3), outdir=self.plotdir, name="Moffat_Position_Plot")
+            print("Done.")
+
         return positions_g, positions_m
     
 
     def get_magnitudes(self, positions, transform, make_plots=False):
-        offset = 0
     
         mags = []
 
@@ -402,10 +422,7 @@ class Astrometry():
         center = SkyCoord(obs.wcs.wcs.crval[0]*u.deg, obs.wcs.wcs.crval[1]*u.deg)
         r = gaia_conical(coordinate=center, transform=transform)
         
-        for i, obs in tqdm(enumerate(self.observations), total=len(self.observations), desc="Performing photometry to get magnitudes"):
-            if not obs.success:
-                offset += 1
-                continue
+        for j, obs in tqdm(self.successful_observations(), total=len(self.observations), desc="Performing photometry to get magnitudes"):
 
             matches = match_to_catalog(obs, r)
 
@@ -413,7 +430,7 @@ class Astrometry():
 
             radii, curve = obs.phot.get_best_radius(obs.data, highest_mag_coord)
 
-            zero, std = obs.phot.get_mag_zero(obs.data, matches, idx=obs.name)
+            zero, _ = obs.phot.get_mag_zero(obs.data, matches, idx=obs.name)
 
             if make_plots:
                 xy_matches = [(x,y) for x,y in zip(matches["x"], matches["y"])]
@@ -421,7 +438,7 @@ class Astrometry():
 
                 curve_of_growth(radii, curve, obs.phot.best_rad, self.plotdir, name=f"curve_of_growth_{obs.name}")
 
-            target_position_xy = obs.eq_to_px(positions[i-offset])
+            target_position_xy = obs.eq_to_px(positions[j])
 
             target_flux = obs.phot.flux_from_aperture_annulus(obs.data, target_position_xy)[0]
 
@@ -434,24 +451,20 @@ class Astrometry():
 
     def to_mpc(self, positions, packed_desig, filter, obs_code, mags, mp_number="     ", discovery=False, note1=" ", note2=" ", write_out=True):
         mpc = ""
-        offset = 0
 
-        for i, obs in tqdm(enumerate(self.observations), total=len(self.observations), desc="Writing observations to 80-column format"):
-            if not obs.success:
-                offset += 1
-                continue
-            
-
-            mpc += eighty_column(packed_desig=packed_desig,
-                                 utc=self.midtime(obs.header),
-                                 coord=positions[i-offset],
-                                 mag=mags[i-offset],
-                                 band=filter,
-                                 obs_code=obs_code,
-                                 packed_number=mp_number,
-                                 discovery=discovery,
-                                 note1=note1,
-                                 note2=note2) + "\n"
+        for i, obs in tqdm(self.successful_observations(), total=len(self.observations), desc="Writing observations to 80-column format"):
+            mpc += eighty_column(
+                packed_desig=packed_desig,
+                utc=self.midtime(obs.header),
+                coord=positions[i],
+                mag=mags[i],
+                band=filter,
+                obs_code=obs_code,
+                packed_number=mp_number,
+                discovery=discovery,
+                note1=note1,
+                note2=note2
+            ) + "\n"
             
         if write_out:
             outdir = os.path.join(self.datadir, "mpc_out.txt").replace("\\", "/")
@@ -459,70 +472,3 @@ class Astrometry():
                 txt.write(mpc)
         
         return mpc
-
-
-def _default_midtime(header):
-    utc = Time(header.get("DATE-OBS"), scale='utc') 
-    offset = (float(header.get("EXPTIME")) / 2) * u.second
-    return utc + offset
-
-def eighty_column(packed_desig, # cols 6-12 (7)
-                  packed_number, # cols 1-5 (5)
-                  discovery, # col 13 (1)
-                  note1,  # col 14 (1)
-                  note2, # col 15 (1))
-                  utc, # cols 16-32 (17)
-                  coord, # cols 33-56
-                  mag,
-                  band, 
-                  obs_code):
-    
-    assert len(packed_number) == 5
-    assert len(packed_desig) == 7
-    assert type(discovery) == bool
-    assert len(note1) == 1 and len(note2) == 1
-    assert isinstance(utc, Time)
-    assert isinstance(coord, SkyCoord)
-    assert len(f"{mag:2.1f}") == 4 and isinstance(mag, float)
-    assert len(band) == 1
-    assert len(str(obs_code)) == 3 and isinstance(obs_code, int)
-
-    packed_full = packed_number + packed_desig
-    packed_full = f"{packed_full:<12}"
-    
-    if discovery:
-        asterisk = "*"
-    else:
-        asterisk = " "
-
-    jd = utc.utc.jd
-    day_frac = jd % 1
-    mpc_time = utc.utc.strftime("%Y %m %d.") + f"{day_frac:.6f}"[2:]
-    mpc_time = f"{mpc_time:<17}"[:17]
-
-    ra = coord.ra.to_string(unit=u.hour, sep=" ", pad=True, precision=2)
-    dec = coord.dec.to_string(unit=u.deg, sep=" ", alwayssign=True, pad=True, precision=1)
-    
-    ra = f"{ra:<12}"[:12]
-    dec = f"{dec:<12}"[:12]
-    
-    magband = f"{mag:>4.1f} {band:<1}"
-
-    out = (
-        f"{packed_full}"
-        f"{asterisk}"
-        f"{note1}{note2}"
-        f"{mpc_time}"
-        f"{ra}"
-        f"{dec}"    
-        f"{' '*9}"     
-        f"{magband}" 
-        f"{' '*6}" 
-        f"{obs_code}"
-    )
-
-    print(out)
-
-    assert len(out) == 80, len(out)
-
-    return out

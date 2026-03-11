@@ -7,7 +7,9 @@
 import numpy as np
 
 from astropy.coordinates import SkyCoord
+
 from astropy.modeling import models, fitting
+
 import astropy.units as u
 
 #########################################################################################################
@@ -161,11 +163,4 @@ def fit_validator(projection, corr):
     dra_arcsec  = np.array([off[0].to_value(u.arcsec) for off in eq_offsets], dtype=float)
     ddec_arcsec = np.array([off[1].to_value(u.arcsec) for off in eq_offsets], dtype=float)
 
-    xy_from_index = np.array([projection.eq_to_px(coord) for coord in eq_from_index], dtype=float)
-    xy_from_field = np.column_stack([x_n, y_n]).astype(float) 
-
-    xy_offsets = xy_from_index - xy_from_field
-    dx_pix = xy_offsets[:, 0]
-    dy_pix = xy_offsets[:, 1]
-
-    return dra_arcsec, ddec_arcsec, dx_pix, dy_pix
+    return dra_arcsec, ddec_arcsec
