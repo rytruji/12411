@@ -19,3 +19,6 @@ class Header():
     
     def TCS_midtime(header):
         return Time(header.get("DATE-OBS") + "T" + header.get("EXP-STRT")) + (float(header.get("EXPTIME")) / 2) * u.second
+    
+    def JWST_midtime(header):
+        return Time(header.get("EXPMID")) * u.second

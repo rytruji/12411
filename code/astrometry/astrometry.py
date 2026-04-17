@@ -54,29 +54,56 @@ class Astrometry():
 
         self.extend(image_names)
 
-            
-    def extend(self, image_names):
+        self.observations = self.observations[self.get_time_order()]
 
-        # test for directory, call extend on contents if so
-        if image_names is None:
-            # collect all files in datadir and recurvisely call extend
-            new_files = glob.glob(os.path.join(self.datadir, "*.fits").replace("\\","/"))
-            filenames = [os.path.basename(f) for f in new_files]
-            assert len(filenames) != 0
-            self.extend(filenames)
+        for obs in self.observations:
+            print(obs.name)
 
-        # must be a filename, create obs instance using its path
-        elif type(image_names) is str:
-            full_path = os.path.join(self.datadir, image_names)
-            self.observations.append(Observation(full_path, name=image_names, verbose=self.verbose))
-        
-        # is either invalid or a list. observation() will handle invalid
-        else:
-            for name in image_names:
-                full_path = os.path.join(self.datadir, name)
-                self.observations.append(Observation(full_path, name=name, verbose=self.verbose))
 
-        self.total_count = len(self.observations)
+    def extend(self, paths=None):
+        # get all fits files recursively
+        all_fits = self.fits_search(paths)
+
+        for file in all_fits:
+            self.observations.append(Observation(file, name=os.path.basename(file), verbose=self.verbose))
+
+
+    def fits_search(self, paths=None):
+        output = []
+
+        # nothing passed --> search datadir
+        if not paths:
+            paths = [self.datadir]
+
+        # string passed --> search that single path
+        if isinstance(paths, str):
+            paths = [paths]
+
+        for path in paths:
+            full_path = os.path.join(self.datadir, path) if not os.path.isabs(path) else path
+
+            if full_path.lower().endswith(('.fits', '.fit')):
+                output.append(full_path)
+            elif os.path.isdir(full_path):
+                output += self.fits_search(glob.glob(os.path.join(full_path, '*')))
+
+        return output
+
+    
+    def get_time_order(self):
+        '''
+        Docstring for get_time_order
+
+        No inputs. Takes self.observations and returns an array of list indices in increasing midtime order.
+        Used to ensure that observations are time consistent regardless of order in the given directory.
+
+        Returns:
+            (1) order, array of list indices corresponding to time order of all observations
+        '''
+
+        exp_times = np.array([self.midtime(obs.header) for obs in self.observations])
+
+        return exp_times.argsort()
 
 
     def center_mask_radius(self, rad):
