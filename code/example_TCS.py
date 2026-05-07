@@ -1,6 +1,6 @@
 from astrometry.astrometry import Astrometry
 from astrometry.query import G_filter_transform
-from astrometry.header import Header
+from astrometry.header import Midtime
 
 # from astropy.modeling.fitting import warnings
 # warnings.filterwarnings("ignore")
@@ -10,7 +10,7 @@ import astropy.units as u
 # create Astrometry coordinator object containing all data files
 astro = Astrometry("C:/Users/truji/Desktop/MIT_F25/12_411/data/20260115/2026AX2", 
                    "/mnt/c/Users/truji/Desktop/MIT_F25/12_411/data/20260115/2026AX2",
-                   midtime_format=Header.TCS_midtime # ensure this matches the telescope in use!
+                   midtime_format=Midtime.TCS_midtime # ensure this matches the telescope in use!
                    )
 
 # calibrate all data files using the given masters
@@ -31,7 +31,7 @@ astro.get_solutions(xyls=True,
 
 # track object. if no coordinate/ephemeris is given/requested, will attempt to autotrack. Otherwise, will ask for start/end pixel locations.
 # if manual tracking is needed, provide pixel locations for the .fits files given in ./for_linear_tracking/, not in the original .fits files.
-positions_g, positions_m = astro.track_objects(make_plots=False, 
+positions_g, positions_m = astro.track_objects(make_plots=True, 
                                                method="Segmentation", # choose from Segmentation or Differential
                                                threshold=3, fwhm=3, # for image segmentation
                                                stationary_error=1*u.arcsec, # eliminates unmoving sources based on this radius

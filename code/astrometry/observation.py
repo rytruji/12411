@@ -243,9 +243,9 @@ class Observation():
 
         segment_map = detect_sources(convolved_data, threshold, npixels=10, connectivity=4)
 
-        # segm_deblend = deblend_sources(convolved_data, segment_map,
-        #                        npixels=10, nlevels=32, contrast=0.001,
-        #                        progress_bar=True)
+        segm_deblend = deblend_sources(convolved_data, segment_map,
+                               npixels=10, nlevels=32, contrast=0.001,
+                               progress_bar=True)
         
         cat = SourceCatalog(self.data, segment_map, convolved_data=convolved_data)
 

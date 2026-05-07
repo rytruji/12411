@@ -71,7 +71,7 @@ class Astrometry():
         output = []
 
         # nothing passed --> search datadir
-        if not paths:
+        if paths is None:
             paths = [self.datadir]
 
         # string passed --> search that single path
@@ -132,7 +132,7 @@ class Astrometry():
             if save_binned:
                 out_binned = os.path.join(self.datadir, f"binned/{obs.name}.fits").replace("\\","/")
                 os.makedirs(os.path.dirname(out_binned), exist_ok=True)
-                
+
                 obs.save_to(out_binned)
 
     def calibrate_observations(self, biaspath, flatpath, darkpath=None):  
@@ -188,9 +188,16 @@ class Astrometry():
         for obs in tqdm(self.observations, total=self.total_count, desc="Requesting plate solutions from local Astrometry.net"):
             # get directory to .corr (that astrometry.net only writes if successful) 
             corr = os.path.join(self.datadir, f"solved/{obs.name}.corr").replace("\\","/")
+            axy = os.path.join(self.datadir, f"solved/{obs.name}.axy").replace("\\","/")
 
             # skip if corr exists (and not overwriting)
-            if os.path.exists(corr) and use_existing:
+            solved_correctly = os.path.exists(corr) and use_existing
+            failed_to_solve = os.path.exists(axy) and not solved_correctly
+
+            if solved_correctly:
+                continue
+            elif failed_to_solve:
+                print("Skipping Previously Unsolved Frame...")
                 continue
 
             if xyls:
@@ -284,6 +291,8 @@ class Astrometry():
             (2) all_times, list of Time objects of observation dates
         '''
 
+        print(make_plots)
+
         all_sources = []
         all_times = []
 
@@ -292,21 +301,18 @@ class Astrometry():
                 continue
             
             # get SourceCatalog and deblended segmentation map of data
-            print("requesting segm")
             cat, segm_deblend, convolved_data = obs.get_segmentation(fwhm=fwhm, threshold=threshold)
             
             # turn cat into QTable that can be used to get source coordinates
             columns = ["xcentroid", "ycentroid"]
             sources = cat.to_table(columns=columns)
 
-            print("making plot")
             if make_plots:
                 print("data stats:", np.nanmin(obs.data), np.nanmax(obs.data))
                 print("convolved stats:", np.nanmin(convolved_data), np.nanmax(convolved_data))
                 print("segm_deblend nlabels:", segm_deblend.nlabels)
                 segmentation_plot(obs.data, convolved_data, cat, segm_deblend, self.plotdir, name=f"segmentation_plot_{obs.name}")
 
-            print("converting")
             # get centroided x, y coords, turn into equatorial
             x_1 = sources["xcentroid"]
             y_1 = sources["ycentroid"]
@@ -323,7 +329,7 @@ class Astrometry():
         return [(i, obs) for i, obs in enumerate(all_successful)]
 
 
-    def auto_tracker(self, stationary_error, prediction_error, threshold, fwhm, depth, make_plots=False):
+    def auto_tracker(self, stationary_error, prediction_error, threshold, fwhm, depth, make_plots):
         '''
         Docstring for auto_tracker
 
@@ -336,9 +342,11 @@ class Astrometry():
         :param stationary_error: Angle, max angular separation between sources considered stationary
         :param prediction_error: Angle, max angular offset between predicted and true position of next source in the chain
         '''
-        all_sources, all_times = self.collect_sources(threshold=threshold, fwhm=fwhm, make_plots=False)
-
+        all_sources, all_times = self.collect_sources(threshold=threshold, fwhm=fwhm, make_plots=make_plots)
         culled_sources = cull_stationary(all_sources, stationary_error)
+        if make_plots:
+            all_source_plot(self, self.plotdir, "all_sources", all_sources=all_sources)
+            all_source_plot(self, self.plotdir, "culled_sources", all_sources=culled_sources)
 
         print("Attempting Movement Search...")
         chains = movement_search(culled_sources, all_times, prediction_error, depth)
