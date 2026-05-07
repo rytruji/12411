@@ -40,9 +40,12 @@ from photutils.segmentation import detect_sources, deblend_sources, SourceCatalo
 class Observation():
     def __init__(self, dir, name=None, sigma=10, fwhm=10, verbose=False):
         self.dir = dir
-        with f.open(self.dir) as hdul:
-            self.data = hdul[0].data
+        with f.open(self.dir, memmap=False) as hdul:
+            data = hdul[0].data
             self.header = hdul[0].header
+
+            nan_fill = np.nanmax(data)
+            self.data = np.where(np.isnan(data), nan_fill, data)
 
         self.name = name
 
@@ -93,6 +96,54 @@ class Observation():
 
     def set_mask(self, x_min, x_max, y_min, y_max):
         self.set_data(self.data[y_min:y_max, x_min:x_max])
+
+    
+    ##### BINNING #####
+
+    def get_bin_size(self, format):
+        self.bin_size = format(self.header)
+        return self.bin_size
+    
+
+    def set_bin_size(self, target_size, format):
+        assert isinstance(target_size, int)
+
+        self.get_bin_size(format=format)
+
+        if self.bin_size != target_size:
+            self.__rebin(target_size)
+
+
+    def __rebin(self, target_size):
+        # make a copy for later restoration
+        self._unbinned_copy = self.data.copy()
+
+        # get number of 2x2 binning iterations to apply, check it is an integer
+        bin_log = np.log2(target_size / self.bin_size)
+        assert bin_log == int(bin_log)
+
+        # get copy of data that will be iteratively binned by 2
+        temp_binned = self.data.copy()
+
+        # for number of iterations needed, bin by 2
+        for _ in range(int(bin_log)):
+            # determine new shape after 2x2 binning
+            new_size = np.array(temp_binned.shape) // 2
+
+            # if size of array is odd, will not work, destructively reshape
+            x_bounds, y_bounds = (np.array(temp_binned.shape) // 2) * 2
+            temp_binned = temp_binned[:x_bounds, :y_bounds]
+
+            # bin 2x2, normalize by mean
+            temp_binned = temp_binned.reshape(new_size[0],2,new_size[1],2).sum(axis=(1,3)) / 4
+
+        # set data array to final binned array, save copy of binned
+        self._binned_copy = temp_binned.copy()
+        self.set_data(temp_binned)
+
+
+    def __restore_unbinned(self):
+        self.set_data(self._unbinned_copy)
 
 
     def save_to(self, outdir):
@@ -192,13 +243,13 @@ class Observation():
 
         segment_map = detect_sources(convolved_data, threshold, npixels=10, connectivity=4)
 
-        segm_deblend = deblend_sources(convolved_data, segment_map,
-                               npixels=10, nlevels=32, contrast=0.001,
-                               progress_bar=False)
+        # segm_deblend = deblend_sources(convolved_data, segment_map,
+        #                        npixels=10, nlevels=32, contrast=0.001,
+        #                        progress_bar=True)
         
-        cat = SourceCatalog(self.data, segm_deblend, convolved_data=convolved_data)
+        cat = SourceCatalog(self.data, segment_map, convolved_data=convolved_data)
 
-        return cat, segm_deblend, convolved_data
+        return cat, segment_map, convolved_data
 
 
     def get_sources_xyls(self, sources):

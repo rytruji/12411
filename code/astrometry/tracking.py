@@ -123,7 +123,7 @@ def validity_check(chain, tol, all_times, depth):
 
         delta_T21 = (all_times[curr] - all_times[prev]).to(u.second)  
 
-        if delta_T21 < 0.1 * u.second:
+        if delta_T21 < 10 * u.second:
             Warning(f"Delta t between frames {prev} and {curr} is {delta_T21}. If exposures are too quick in succession, autotracking is likely to fail.")
 
         dra12, ddec12 = (chain[prev].spherical_offsets_to(chain[curr]))

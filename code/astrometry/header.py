@@ -11,7 +11,7 @@ import astropy.units as u
 #-------------------------------------------------------------------------------------------------------#
 #########################################################################################################
 
-class Header():
+class Midtime():
     def default_midtime(header):
         utc = Time(header.get("DATE-OBS"), scale='utc') 
         offset = (float(header.get("EXPTIME")) / 2) * u.second
@@ -21,4 +21,9 @@ class Header():
         return Time(header.get("DATE-OBS") + "T" + header.get("EXP-STRT")) + (float(header.get("EXPTIME")) / 2) * u.second
     
     def JWST_midtime(header):
-        return Time(header.get("EXPMID")) * u.second
+        return Time(header.get("EXPMID"), scale='utc', format='mjd').utc
+
+
+class Binning():
+    def default_binning(header):
+        return header.get("XBINNING")

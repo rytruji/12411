@@ -12,7 +12,7 @@ from .plotting import *
 
 from .query import gaia_conical, match_to_catalog
 from .statistics import outlier_rejection, eq_residuals_from_line
-from .header import Header
+from .header import Midtime, Binning
 from .mpc import eighty_column
 
 from astropy.coordinates import SkyCoord
@@ -50,14 +50,11 @@ class Astrometry():
         if midtime_format:
             self.midtime = midtime_format
         else:
-            self.midtime = Header.default_midtime
+            self.midtime = Midtime.default_midtime
 
         self.extend(image_names)
 
-        self.observations = self.observations[self.get_time_order()]
-
-        for obs in self.observations:
-            print(obs.name)
+        _, self.observations = zip(*sorted(zip(self.get_time_order(), self.observations)))
 
 
     def extend(self, paths=None):
@@ -66,6 +63,8 @@ class Astrometry():
 
         for file in all_fits:
             self.observations.append(Observation(file, name=os.path.basename(file), verbose=self.verbose))
+
+        self.total_count = len(self.observations)
 
 
     def fits_search(self, paths=None):
@@ -125,6 +124,16 @@ class Astrometry():
 
             obs.set_mask(x_min, x_max, y_min, y_max)
 
+
+    def bin_observations(self, kernel_size=1, header_bin_format=Binning.default_binning, save_binned=False):
+        for obs in tqdm(self.observations, total=self.total_count, desc="Rebinning Data"):
+            obs.set_bin_size(kernel_size, header_bin_format)
+
+            if save_binned:
+                out_binned = os.path.join(self.datadir, f"binned/{obs.name}.fits").replace("\\","/")
+                os.makedirs(os.path.dirname(out_binned), exist_ok=True)
+                
+                obs.save_to(out_binned)
 
     def calibrate_observations(self, biaspath, flatpath, darkpath=None):  
 
@@ -283,15 +292,21 @@ class Astrometry():
                 continue
             
             # get SourceCatalog and deblended segmentation map of data
+            print("requesting segm")
             cat, segm_deblend, convolved_data = obs.get_segmentation(fwhm=fwhm, threshold=threshold)
             
             # turn cat into QTable that can be used to get source coordinates
             columns = ["xcentroid", "ycentroid"]
             sources = cat.to_table(columns=columns)
 
+            print("making plot")
             if make_plots:
+                print("data stats:", np.nanmin(obs.data), np.nanmax(obs.data))
+                print("convolved stats:", np.nanmin(convolved_data), np.nanmax(convolved_data))
+                print("segm_deblend nlabels:", segm_deblend.nlabels)
                 segmentation_plot(obs.data, convolved_data, cat, segm_deblend, self.plotdir, name=f"segmentation_plot_{obs.name}")
 
+            print("converting")
             # get centroided x, y coords, turn into equatorial
             x_1 = sources["xcentroid"]
             y_1 = sources["ycentroid"]
