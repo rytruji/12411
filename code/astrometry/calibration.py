@@ -82,6 +82,6 @@ def master_flat(outdir, flat_files, biasdir, name="master_flat"):
 
     master_flat[master_flat <= 0.1] = 1
 
-    out = f.PrimaryHDU(master_flat)
+    out = f.PrimaryHDU(master_flat, header=f.open(flat_files[0])[0].header)
 
     out.writeto(os.path.join(outdir, f"{name}.fits").replace("\\","/"), overwrite=True)

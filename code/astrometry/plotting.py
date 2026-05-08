@@ -56,18 +56,14 @@ def all_source_plot(astro, outdir, name, all_sources):
     n = len(all_sources)
 
     fig = plt.figure(figsize=(5, 5))
-    ax = fig.add_subplot(projection=astro.observations[n // 2].wcs)
+    ax = fig.add_subplot()
 
-    im = ax.imshow(astro.observations[n // 2].data, cmap="gray_r", norm='log')
-    cbar = plt.colorbar(im, ax=ax)
-    cbar.set_label('Counts')
     ax.set_xlabel("RA (HH MM SS.)")
     ax.set_ylabel("Dec (DD MM SS.)")
 
-
     for i, sc in enumerate(all_sources):
 
-        color = cmap(i / 2*max(n - 1, 1))
+        color = cmap(i * 2)
 
         ax.scatter(
             sc.ra.deg,
@@ -76,9 +72,7 @@ def all_source_plot(astro, outdir, name, all_sources):
             marker="x",
             alpha=0.3,
             color=color,
-            transform=ax.get_transform('world')
         )
-
 
     ax.set_aspect("equal")
     ax.relim()

@@ -12,8 +12,9 @@ from .plotting import *
 
 from .query import gaia_conical, match_to_catalog
 from .statistics import outlier_rejection, eq_residuals_from_line
-from .header import Midtime, Binning
+from .header import Midtime
 from .mpc import eighty_column
+from .binning import Binning, Format
 
 from astropy.coordinates import SkyCoord
 from astropy.io import fits as f
@@ -102,7 +103,7 @@ class Astrometry():
 
         exp_times = np.array([self.midtime(obs.header) for obs in self.observations])
 
-        return exp_times.argsort()
+        return exp_times
 
 
     def center_mask_radius(self, rad):
@@ -125,7 +126,7 @@ class Astrometry():
             obs.set_mask(x_min, x_max, y_min, y_max)
 
 
-    def bin_observations(self, kernel_size=1, header_bin_format=Binning.default_binning, save_binned=False):
+    def bin_observations(self, kernel_size=1, header_bin_format=Format.default_binning, save_binned=False):
         for obs in tqdm(self.observations, total=self.total_count, desc="Rebinning Data"):
             obs.set_bin_size(kernel_size, header_bin_format)
 
@@ -135,17 +136,23 @@ class Astrometry():
 
                 obs.save_to(out_binned)
 
-    def calibrate_observations(self, biaspath, flatpath, darkpath=None):  
+    def calibrate_observations(self, biaspath, flatpath, darkpath=None, binning=1):  
 
         with f.open(biaspath) as biashdul:
-            biasdata = biashdul[0].data
+            bin = Binning(biashdul[0].data, biashdul[0].header, Format.default_binning)
+            bin.set_bin_size(binning)
+            biasdata = bin.binned
         
         with f.open(flatpath) as flathdul:
-            flatdata = flathdul[0].data
+            bin = Binning(flathdul[0].data, flathdul[0].header, Format.default_binning)
+            bin.set_bin_size(binning)
+            flatdata = bin.binned
 
         if darkpath:
             with f.open(darkpath) as darkhdul:
-                darkdata = darkhdul[0].data
+                bin = Binning(darkhdul[0].data, darkhdul[0].header, Format.default_binning)
+                bin.set_bin_size(binning)
+                darkdata = bin.binned
         else:
             darkdata = None
 
@@ -291,8 +298,6 @@ class Astrometry():
             (2) all_times, list of Time objects of observation dates
         '''
 
-        print(make_plots)
-
         all_sources = []
         all_times = []
 
@@ -307,10 +312,12 @@ class Astrometry():
             columns = ["xcentroid", "ycentroid"]
             sources = cat.to_table(columns=columns)
 
-            if make_plots:
+            if self.verbose:
                 print("data stats:", np.nanmin(obs.data), np.nanmax(obs.data))
                 print("convolved stats:", np.nanmin(convolved_data), np.nanmax(convolved_data))
                 print("segm_deblend nlabels:", segm_deblend.nlabels)
+
+            if make_plots:
                 segmentation_plot(obs.data, convolved_data, cat, segm_deblend, self.plotdir, name=f"segmentation_plot_{obs.name}")
 
             # get centroided x, y coords, turn into equatorial
@@ -343,9 +350,10 @@ class Astrometry():
         :param prediction_error: Angle, max angular offset between predicted and true position of next source in the chain
         '''
         all_sources, all_times = self.collect_sources(threshold=threshold, fwhm=fwhm, make_plots=make_plots)
-        culled_sources = cull_stationary(all_sources, stationary_error)
         if make_plots:
             all_source_plot(self, self.plotdir, "all_sources", all_sources=all_sources)
+        culled_sources = cull_stationary(all_sources, stationary_error)
+        if make_plots:
             all_source_plot(self, self.plotdir, "culled_sources", all_sources=culled_sources)
 
         print("Attempting Movement Search...")

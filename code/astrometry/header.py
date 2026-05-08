@@ -22,8 +22,3 @@ class Midtime():
     
     def JWST_midtime(header):
         return Time(header.get("EXPMID"), scale='utc', format='mjd').utc
-
-
-class Binning():
-    def default_binning(header):
-        return header.get("XBINNING")
