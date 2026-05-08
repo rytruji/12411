@@ -49,6 +49,8 @@ class Observation():
             nan_fill = np.nanmax(data)
             self.data = np.where(np.isnan(data), nan_fill, data)
 
+        name = name.replace(r"'", "")
+        name = name.replace(r'"', "")
         self.name = name
 
         self.sigma=sigma

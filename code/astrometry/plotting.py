@@ -61,9 +61,11 @@ def all_source_plot(astro, outdir, name, all_sources):
     ax.set_xlabel("RA (HH MM SS.)")
     ax.set_ylabel("Dec (DD MM SS.)")
 
+    n = len(all_sources)
+
     for i, sc in enumerate(all_sources):
 
-        color = cmap(i * 2)
+        color = cmap(i * (256 // n))
 
         ax.scatter(
             sc.ra.deg,

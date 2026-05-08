@@ -8,17 +8,17 @@ import astropy.units as u
 warnings.filterwarnings("ignore")
 
 # create Astrometry coordinator object containing all data files
-astro = Astrometry(r'C:\Users\wao\Desktop\NEO_pipeline\test_series\20260314\P12mo8c', 
-                   r"/mnt/c\Users\wao\Desktop\NEO_pipeline\test_series\20260314\P12mo8c")
+astro = Astrometry(r'C:\Users\wao\Desktop\NEO_pipeline\test_series\20260427', 
+                   r"/mnt/c\Users\wao\Desktop\NEO_pipeline\test_series\20260427")
 
 # crop and bin, if needed
 # astro.center_mask_radius(1000)
 astro.bin_observations(4)
 
 # calibrate all data files using the given masters
-astro.calibrate_observations(r'C:\Users\wao\Desktop\NEO_pipeline\test_series\calib\mbias_20250808_p2.fit',
-                             r'C:\Users\wao\Desktop\NEO_pipeline\test_series\calib\mflat_20260407_p2.fit',
-                             binning=4)
+# astro.calibrate_observations(r'C:\Users\wao\Desktop\NEO_pipeline\test_series\calib\mbias_20250808_p2.fit',
+#                              r'C:\Users\wao\Desktop\NEO_pipeline\test_series\calib\mflat_20260407_p2.fit',
+#                              binning=4)
 
 # get astrometric solutions for all plates
 # debug for solve-field calls written to ./debug/ unless parameter 'silent' is True
