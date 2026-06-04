@@ -23,6 +23,13 @@ class Projection():
         # set image center
         self.ra0, self.dec0 = ra0, dec0
 
+        # initiate polynomials
+        poly_xi  = models.Polynomial2D(degree=degree)
+        poly_eta = models.Polynomial2D(degree=degree)
+
+        poly_x = models.Polynomial2D(degree=degree)
+        poly_y = models.Polynomial2D(degree=degree)
+
         # construct field (x, y) and index (ra, dec) positions using corr
         x_n = np.array(corr["field_x"])
         y_n = np.array(corr["field_y"])
@@ -33,13 +40,7 @@ class Projection():
         # project all ra, dec around image center
         xi_n, eta_n = gnomonic_projection(ra_n, dec_n, ra0, dec0)
 
-        # make and fit polynomials
-        poly_xi  = models.Polynomial2D(degree=degree)
-        poly_eta = models.Polynomial2D(degree=degree)
-
-        poly_x = models.Polynomial2D(degree=degree)
-        poly_y = models.Polynomial2D(degree=degree)
-
+        # fit polynomials
         fitter = fitting.LinearLSQFitter()
 
         self.fit_xi  = fitter(poly_xi, x_n, y_n, xi_n)

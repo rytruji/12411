@@ -237,31 +237,39 @@ class Astrometry():
                     txt.write(stderr)
 
 
-    def get_solutions(self, xyls=False, fwhm=10, sigma=10, use_existing=False, make_plots=False, scale=None, silent=False, degree=1):
-
+    def get_solutions(self, xyls=False, fwhm=10, sigma=10, use_existing=False, make_plots=False, scale=None, silent=False, use_WCS=False, degree=1):
         # catch parameter errors
         if not xyls:
             if self.masked:
-                print("xyls=False is incompatible with data that has been masked.\n" +
-                    "This is to ensure consistency between data and wcs.\n")
-        if degree <= 0:
-            raise AttributeError(f"Polynomial fit degree must be greater than or equal to one, but you input {degree}. Please input a higher value.")
-        if type(degree) != int:
-            raise AttributeError(f"Polynomial fit degree must be an integer, but you input {degree}. Please input an integer.")
+                raise AttributeError("xyls=False is incompatible with data that has been masked.")
+        elif xyls and use_WCS:
+            xyls = False
+            print("xyls is redundant with use_WCS set to True. xyls has been set to False. Continuing...")
 
+        # skip solving if use_WCS
+        if use_WCS:
+            for obs in tqdm(self.observations, total=self.total_count, desc="Saving wcs and corr files; making converters"):
+                obs.set_wcs(obs.dir)
+                obs.get_projection(nosolve=True)
         else:
-            self.get_xyls(fwhm, sigma, use_existing=use_existing, make_plots=make_plots)
+            # ensure fit degree is sensible
+            if degree <= 0:
+                raise AttributeError(f"Polynomial fit degree must be greater than or equal to one, but you input {degree}. Please input a higher value.")
+            if type(degree) != int:
+                raise AttributeError(f"Polynomial fit degree must be an integer, but you input {degree}. Please input an integer.")
+            else:
+                self.get_xyls(fwhm, sigma, use_existing=use_existing, make_plots=make_plots)
 
-        self.get_plate_solve(xyls, use_existing, scale=scale, silent=silent)
+            self.get_plate_solve(xyls, use_existing, scale=scale, silent=silent)
 
-        for obs in tqdm(self.observations, total=self.total_count, desc="Saving wcs and corr files; making converters"):
-            try:
-                obs.set_wcs(os.path.join(self.datadir, "solved", obs.name + ".wcs").replace("\\","/"))
-                obs.set_corr(os.path.join(self.datadir, "solved", obs.name + ".corr").replace("\\","/"))
-                obs.get_projection(degree)
-            except FileNotFoundError:
-                print(f"Field {obs.name} did not solve successfully and has been skipped.")
-                obs.success = False
+            for obs in tqdm(self.observations, total=self.total_count, desc="Saving wcs and corr files; making converters"):
+                try:
+                    obs.set_wcs(os.path.join(self.datadir, "solved", obs.name + ".wcs").replace("\\","/"))
+                    obs.set_corr(os.path.join(self.datadir, "solved", obs.name + ".corr").replace("\\","/"))
+                    obs.get_projection(degree)
+                except FileNotFoundError:
+                    print(f"Field {obs.name} did not solve successfully and has been skipped.")
+                    obs.success = False
             
 
     def validate_fits(self, save_stats=True, make_plots=False):

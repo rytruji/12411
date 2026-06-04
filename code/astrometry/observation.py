@@ -14,7 +14,7 @@ from .calibration import calibrate
 
 from astropy.stats import sigma_clipped_stats
 from astropy.io import fits as f
-from astropy.wcs import WCS
+from astropy.wcs import utils, WCS
 from astropy.modeling import models, fitting
 from astropy.table import Table
 
@@ -43,11 +43,10 @@ class Observation():
     def __init__(self, dir, name=None, sigma=10, fwhm=10, verbose=False):
         self.dir = dir
         with f.open(self.dir, memmap=False) as hdul:
-            data = hdul[0].data
+            data = hdul['SCI'].data
             self.header = hdul[0].header
 
-            nan_fill = np.nanmax(data)
-            self.data = np.where(np.isnan(data), nan_fill, data)
+            self.data = np.nanmedian(data, axis=0)
 
         name = name.replace(r"'", "")
         name = name.replace(r'"', "")
@@ -70,6 +69,7 @@ class Observation():
             (1) None
         '''
         self._clipped_cache = None
+        self.old_data = self.data.copy()
         self.data = data
     
 
@@ -80,6 +80,7 @@ class Observation():
         '''
         with f.open(wcs) as hdul:
             self.wcs = WCS(hdul[0].header)
+            print(self.wcs)
 
 
     def set_corr(self, corr):
@@ -260,11 +261,15 @@ class Observation():
         return hdu
     
     
-    def get_projection(self, degree):
-        ra0, dec0 = self.wcs.wcs.crval
-        self.projection = Projection(self.corr, ra0, dec0, degree=degree)
-        self.eq_to_px = self.projection.eq_to_px
-        self.px_to_eq = self.projection.px_to_eq
+    def get_projection(self, degree=1, nosolve=False):
+        if nosolve:
+            self.eq_to_px = lambda sc: utils.skycoord_to_pixel(sc, self.wcs)
+            self.px_to_eq = lambda x, y: utils.pixel_to_skycoord(x, y, self.wcs)
+        else:
+            ra0, dec0 = self.wcs.wcs.crval
+            self.projection = Projection(self.corr, ra0, dec0, degree=degree, nosolve=nosolve)
+            self.eq_to_px = self.projection.eq_to_px
+            self.px_to_eq = self.projection.px_to_eq
 
 
     def Moffat2D_centroid(self, ap):
