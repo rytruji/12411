@@ -3,7 +3,6 @@
 #------------------------------#   created 15/01/2026 by truji@mit.edu   #------------------------------#
 #-------------------------------------------------------------------------------------------------------#
 #########################################################################################################
-
 import numpy as np
 
 from astropy.coordinates import SkyCoord
@@ -18,7 +17,7 @@ import astropy.units as u
 
 
 class Projection():
-    def __init__(self, corr, ra0, dec0, degree=1):
+    def __init__(self, corr, ra0, dec0, degree=1, nosolve=False):
             
         # set image center
         self.ra0, self.dec0 = ra0, dec0

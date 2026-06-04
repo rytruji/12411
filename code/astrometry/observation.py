@@ -3,7 +3,6 @@
 #------------------------------#   created 09/01/2026 by truji@mit.edu   #------------------------------#
 #-------------------------------------------------------------------------------------------------------#
 #########################################################################################################
-
 from .projection import Projection
 
 from .photometry import Photometry
@@ -43,10 +42,8 @@ class Observation():
     def __init__(self, dir, name=None, sigma=10, fwhm=10, verbose=False):
         self.dir = dir
         with f.open(self.dir, memmap=False) as hdul:
-            data = hdul['SCI'].data
+            self.data = hdul[0].data
             self.header = hdul[0].header
-
-            self.data = np.nanmedian(data, axis=0)
 
         name = name.replace(r"'", "")
         name = name.replace(r'"', "")
@@ -209,7 +206,7 @@ class Observation():
 
     def get_segmentation(self, fwhm, threshold):
         bkg_estimator = MedianBackground()
-        bkg = Background2D(self.data, 50, filter_size=(5, 5), bkg_estimator=bkg_estimator)
+        bkg = Background2D(self.data, box_size=(np.array(self.data.shape)//8), filter_size=(5, 5), bkg_estimator=bkg_estimator)
         back2d_data = self.data - bkg.background
 
         threshold *= bkg.background_rms
@@ -217,7 +214,7 @@ class Observation():
         kernel = make_2dgaussian_kernel(fwhm, (2 * fwhm) - 1)
         convolved_data = convolve(back2d_data, kernel)
 
-        segment_map = detect_sources(convolved_data, threshold, npixels=10, connectivity=4)
+        segment_map = detect_sources(back2d_data, threshold, npixels=10, connectivity=4)
 
         segm_deblend = deblend_sources(convolved_data, segment_map,
                                npixels=10, nlevels=32, contrast=0.001,

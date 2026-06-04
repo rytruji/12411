@@ -316,7 +316,7 @@ def segmentation_plot(data, convolved_data, cat, segment_map, outdir, name="segm
 
     fig, ax3 = plt.subplots(figsize=(5, 5))
 
-    ax3.imshow(convolved_data, origin='upper', cmap='grey_r', norm=LogNorm(vmin=np.nanmin(data), vmax=np.nanmax(data)))
+    ax3.imshow(convolved_data, origin='upper', cmap='grey_r')
     ax3.set_title('Gaussian-Convolved Data')
     
     os.makedirs(os.path.join(outdir, "segmentations").replace("\\","/"), exist_ok=True)
