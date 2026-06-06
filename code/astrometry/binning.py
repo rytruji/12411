@@ -12,7 +12,10 @@ import numpy as np
 
 class Format():
     def default_binning(header):
-        return header.get("XBINNING")
+        binning = header.get("XBINNING")
+        if binning is None:
+            binning = header.get("BINX")
+        return binning
 
 
 class Binning():
@@ -52,4 +55,3 @@ class Binning():
 
             # bin 2x2, normalize by mean
             self.binned = self.binned.reshape(new_size[0],2,new_size[1],2).sum(axis=(1,3))
-            self.binned = np.clip(self.binned, 0, 65535)

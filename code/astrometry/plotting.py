@@ -100,13 +100,13 @@ def source_plot(obs, sources, outdir, name="detected_sources"):
 
     positions = np.transpose((sources['xcentroid'], sources['ycentroid']))
 
-    apertures = CircularAperture(positions, r=7.0)
+    apertures = CircularAperture(positions, r=15.0)
 
-    apertures.plot(ax=ax, color='blue', lw=0.5, alpha=0.5)
+    apertures.plot(ax=ax, color='red', lw=1, alpha=0.5)
     
     os.makedirs(os.path.join(outdir, "source_plots").replace("\\","/"), exist_ok=True)
     plt.savefig(os.path.join(outdir, "source_plots", f"{name}.pdf").replace("\\","/"), dpi=300, bbox_inches="tight")
-    plt.savefig(os.path.join(outdir, "source_plots", f"{name}.png").replace("\\","/"), dpi=300, bbox_inches="tight")
+    # plt.savefig(os.path.join(outdir, "source_plots", f"{name}.png").replace("\\","/"), dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 

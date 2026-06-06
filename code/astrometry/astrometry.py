@@ -186,57 +186,8 @@ class Astrometry():
             xyls.writeto(out_xyls, overwrite=True)
             obs.set_xyls(out_xyls)
 
-        
-    def get_plate_solve(self, xyls=False, use_existing=False, scale=None, silent=False):
-        solveddir = os.path.join(self.linuxdir, "solved").replace("\\","/")
-        os.makedirs(solveddir, exist_ok=True)
 
-        for obs in tqdm(self.observations, total=self.total_count, desc="Requesting plate solutions from local Astrometry.net"):
-            # get directory to .corr (that astrometry.net only writes if successful) 
-            corr = os.path.join(self.datadir, f"solved/{obs.name}.corr").replace("\\","/")
-            axy = os.path.join(self.datadir, f"solved/{obs.name}.axy").replace("\\","/")
-
-            # skip if corr exists (and not overwriting)
-            solved_correctly = os.path.exists(corr) and use_existing
-            failed_to_solve = os.path.exists(axy) and not solved_correctly
-
-            if solved_correctly:
-                continue
-            elif failed_to_solve:
-                print("Skipping Previously Unsolved Frame...")
-                continue
-
-            if xyls:
-                platedir = os.path.join(self.linuxdir, f"xyls/{obs.name}.xyls").replace("\\","/")
-            else:
-                platedir = os.path.join(self.linuxdir, obs.name).replace("\\","/")
-            
-            if scale:
-                cmd = f'wsl ~ -e sh -c "solve-field {platedir} --overwrite --dir {solveddir} --no-plots --scale-low {scale-0.05} --scale-high {scale+0.05} --scale-units arcsecperpix"'
-            else:
-                cmd=  f'wsl ~ -e sh -c "solve-field {platedir} --overwrite --dir {solveddir} --no-plots --scale-units arcsecperpix"'
-
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            try:
-                stdout, stderr = proc.communicate(timeout=30)
-            except:
-                proc.kill()
-                stdout, stderr = proc.communicate()
-            
-            if not silent:
-                os.makedirs(self.debugdir, exist_ok=True)
-
-                stdout_path = os.path.join(self.debugdir, f"stdout_{obs.name}.txt").replace("\\","/")
-                with open(stdout_path, "w") as txt:
-                    txt.write(stdout)
-
-                if not stderr: continue
-                stderr_path = os.path.join(self.debugdir, f"stderr_{obs.name}.txt").replace("\\","/")
-                with open(stderr_path, "w") as txt:
-                    txt.write(stderr)
-
-
-    def get_solutions(self, xyls=False, fwhm=10, sigma=10, use_existing=False, make_plots=False, scale=None, silent=False, use_WCS=False, degree=1):
+    def get_solutions(self, xyls=False, fwhm=10, sigma=10, use_existing=False, make_plots=False, scale=None, debug=True, use_WCS=False, degree=1):
         # catch parameter errors
         if not xyls:
             if self.masked:
@@ -245,31 +196,108 @@ class Astrometry():
             xyls = False
             print("xyls is redundant with use_WCS set to True. xyls has been set to False. Continuing...")
 
-        # skip solving if use_WCS
+        # skip plate solving with Astrometry.net if use_WCS
         if use_WCS:
             for obs in tqdm(self.observations, total=self.total_count, desc="Saving wcs and corr files; making converters"):
                 obs.set_wcs(obs.dir)
+                # still need a projection, but with a=1, e=1, b=c=d=f=0
                 obs.get_projection(nosolve=True)
+        # otherwise, solve with Astrometry.net
         else:
             # ensure fit degree is sensible
             if degree <= 0:
                 raise AttributeError(f"Polynomial fit degree must be greater than or equal to one, but you input {degree}. Please input a higher value.")
             if type(degree) != int:
                 raise AttributeError(f"Polynomial fit degree must be an integer, but you input {degree}. Please input an integer.")
-            else:
+            elif xyls:
                 self.get_xyls(fwhm, sigma, use_existing=use_existing, make_plots=make_plots)
 
-            self.get_plate_solve(xyls, use_existing, scale=scale, silent=silent)
+            to_solve = self.observations
+            while len(to_solve) != 0:
+                to_solve = self.get_plate_solve(to_solve, xyls, use_existing, scale=scale, debug=debug, degree=degree)
+        
 
-            for obs in tqdm(self.observations, total=self.total_count, desc="Saving wcs and corr files; making converters"):
-                try:
-                    obs.set_wcs(os.path.join(self.datadir, "solved", obs.name + ".wcs").replace("\\","/"))
-                    obs.set_corr(os.path.join(self.datadir, "solved", obs.name + ".corr").replace("\\","/"))
-                    obs.get_projection(degree)
-                except FileNotFoundError:
-                    print(f"Field {obs.name} did not solve successfully and has been skipped.")
-                    obs.success = False
+    def get_plate_solve(self, obs_list, xyls=False, use_existing=False, scale=None, debug=True, inference=True, radius=10*u.arcmin, degree=1):
+        solveddir = os.path.join(self.linuxdir, "solved").replace("\\","/")
+        os.makedirs(solveddir, exist_ok=True)
+
+        # inference frame starts as unsolved, inference fails starts as empty
+        inference_frame = None
+        resolve_bank = []
+        for obs in tqdm(obs_list, total=len(obs_list), desc="Requesting plate solutions from local Astrometry.net"):
+            # get directory to .corr (that astrometry.net only writes if successful) 
+            corr = os.path.join(self.datadir, f"solved/{obs.name}.corr").replace("\\","/")
+            wcs = os.path.join(self.datadir, f"solved/{obs.name}.wcs").replace("\\","/")
+            axy = os.path.join(self.datadir, f"solved/{obs.name}.axy").replace("\\","/")
+            if xyls:
+                platedir = os.path.join(self.linuxdir, f"xyls/{obs.name}.xyls").replace("\\","/")
+            else:
+                platedir = os.path.join(self.linuxdir, obs.name).replace("\\","/")
             
+
+            # skip if corr exists (and not overwriting)
+            solved_already = os.path.exists(corr) and use_existing
+
+            if not solved_already:
+                failed_to_solve = os.path.exists(axy) and not solved_already and hasattr(obs, "_no_inf")
+
+                if failed_to_solve:
+                    print("Skipping Previously Unsolved Frame...")
+                    continue
+
+                if inference_frame is not None:
+                    stdout, stderr = self._astrometry_call(platedir, solveddir, radius, inference_frame.scale, inference_frame.center_coord)
+                elif scale is not None:
+                    stdout, stderr = self._astrometry_call(platedir, solveddir, radius, scale)
+                else:
+                    stdout, stderr = self._astrometry_call(platedir, solveddir, radius)
+                    obs._no_inf = True
+
+                if debug:
+                    os.makedirs(self.debugdir, exist_ok=True)
+
+                    stdout_path = os.path.join(self.debugdir, f"stdout_{obs.name}.txt").replace("\\","/")
+                    with open(stdout_path, "w") as txt:
+                        txt.write(stdout)
+
+                    if stderr:
+                        stderr_path = os.path.join(self.debugdir, f"stderr_{obs.name}.txt").replace("\\","/")
+                        with open(stderr_path, "w") as txt:
+                            txt.write(stderr)
+
+            try:
+                obs.set_wcs(wcs)
+                obs.set_corr(corr)
+                obs.get_projection(degree)
+                if inference_frame is None:
+                    inference_frame = obs
+                    print(f"Using {obs.name} as an inference frame.")
+            except FileNotFoundError:
+                if inference_frame is not None:
+                    resolve_bank.append(obs)
+                print(f"Field {obs.name} did not solve successfully and has been skipped.")
+                obs.success = False
+
+        return resolve_bank
+
+    def _astrometry_call(self, platedir, solveddir, radius, scale=None, coord=None):
+        cmd = f'wsl ~ -e sh -c "solve-field {platedir} --overwrite --dir {solveddir} --no-plots --objs 50 --depth 10,20,30,40,50 --odds-to-solve 1e6'
+
+        if scale is not None:
+            cmd += f' --scale-low {scale.value-0.05} --scale-high {scale.value+0.05} --scale-units arcsecperpix'
+        if coord is not None:
+            assert isinstance(coord, tuple) and len(coord) == 2
+            cmd += f' --ra {coord[0].to(u.deg).value} --dec {coord[1].to(u.deg).value} --radius {radius.to(u.degree).value}'
+
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            stdout, stderr = proc.communicate(timeout=90)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+
+        return stdout, stderr
+
 
     def validate_fits(self, save_stats=True, make_plots=False):
         residuals = []

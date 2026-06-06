@@ -16,6 +16,7 @@ from astropy.io import fits as f
 from astropy.wcs import utils, WCS
 from astropy.modeling import models, fitting
 from astropy.table import Table
+import astropy.units as u
 
 import warnings
 from astropy.wcs import FITSFixedWarning
@@ -77,7 +78,9 @@ class Observation():
         '''
         with f.open(wcs) as hdul:
             self.wcs = WCS(hdul[0].header)
-            print(self.wcs)
+
+        self.center_coord = tuple([value * unit for value, unit in zip(self.wcs.wcs.crval, self.wcs.wcs.cunit)])
+        self.scale = (utils.proj_plane_pixel_scales(self.wcs.celestial).mean() * u.deg).to(u.arcsec)
 
 
     def set_corr(self, corr):
