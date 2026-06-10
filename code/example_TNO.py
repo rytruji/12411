@@ -1,6 +1,6 @@
-from astrometry.astrometry import Astrometry
-from astrometry.query import G_filter_transform
-from astrometry.header import Midtime
+from pymod.astrometry import Astrometry
+from pymod.query import G_filter_transform
+from pymod.header import Midtime
 
 from astropy.modeling.fitting import warnings
 import astropy.units as u
