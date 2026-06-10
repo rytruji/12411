@@ -11,47 +11,41 @@ import numpy as np
 #########################################################################################################
 
 class Format():
+    @staticmethod
     def default_binning(header):
-        binning = header.get("XBINNING")
-        if binning is None:
-            binning = header.get("BINX")
+        binning = header.get("XBINNING") or header.get("BINX")
         return binning
 
 
 class Binning():
     def __init__(self, data, header, format):
-        self.bin_size = format(header)
+        self.original_bin_size = format(header) or 1
 
-        self._unbinned_copy = data.copy()
-        self.binned = data.copy()
-
-
-    def get_bin_size(self):
-        return self.bin_size
+        self._unbinned_copy = np.asarray(data, dtype=np.float32)
+        self.bin_size = self.original_bin_size
+        self.binned = self._unbinned_copy.copy()
     
 
     def set_bin_size(self, target_size):
         assert isinstance(target_size, int)
 
-        self.get_bin_size()
-
         if self.bin_size != target_size:
-            self.__rebin(target_size)
+            self._rebin(target_size)
 
 
-    def __rebin(self, target_size):
-        # get number of 2x2 binning iterations to apply, check it is an integer
-        bin_log = np.log2(target_size / self.bin_size)
-        assert bin_log == int(bin_log)
+    def _rebin(self, target_size: int):
+        factor = target_size // self.original_bin_size
+        data = self._unbinned_copy
 
-        # for number of iterations needed, bin by 2
-        for _ in range(int(bin_log)):
-            # determine new shape after 2x2 binning
-            new_size = np.array(self.binned.shape) // 2
+        h, w = (np.array(data.shape) // factor) * factor
+        data = data[:h, :w]
 
-            # if size of array is odd, will not work, destructively reshape
-            x_bounds, y_bounds = (np.array(self.binned.shape) // 2) * 2
-            self.binned = self.binned[:x_bounds, :y_bounds]
+        row_idx = np.arange(0, h, factor)
+        col_idx = np.arange(0, w, factor)
+        self.binned = np.add.reduceat(np.add.reduceat(data, row_idx, axis=0), col_idx, axis=1)
+        self.bin_size = target_size
 
-            # bin 2x2, normalize by mean
-            self.binned = self.binned.reshape(new_size[0],2,new_size[1],2).sum(axis=(1,3))
+    
+    def _unbin(self):
+        self.binned = self._unbinned_copy
+        self.bin_size = self.original_bin_size

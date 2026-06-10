@@ -28,8 +28,8 @@ astro.validate_fits(make_plots=True)
 
 # track object. if no coordinate/ephemeris is given/requested, will attempt to autotrack. Otherwise, will ask for start/end pixel locations.
 # if manual tracking is needed, provide pixel locations for the .fits files given in ./for_linear_tracking/, not in the original .fits files.
-positions_g, positions_m = astro.track_objects(make_plots=True, threshold=5, fwhm=5, stationary_error=1*u.arcsec, prediction_error=3*u.arcsec, depth=4, rejection=True)
+positions_g, positions_m = astro.track_objects(make_plots=False, threshold=5, fwhm=5, stationary_error=0.5*u.arcsec, prediction_error=5*u.arcsec, depth=13, rejection=False)
 
-mags = astro.get_magnitudes(positions_m, G_filter_transform.SDSSr, make_plots=True)
+mags, errs = astro.get_magnitudes(positions_m, G_filter_transform.SDSSr, make_plots=True)
 
 # astro.to_mpc(positions_g, packed_desig="K08M05B", filter="r", note2="C", obs_code=954, mags=mags, write_out=True)

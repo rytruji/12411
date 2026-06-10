@@ -6,6 +6,8 @@
 
 import numpy as np
 
+from .plotting import phot_stars_mag
+
 from photutils.aperture import CircularAnnulus, CircularAperture, aperture_photometry
 
 from astropy.stats import sigma_clipped_stats
@@ -52,29 +54,30 @@ class Photometry():
         total_back = bkg_mean * ap.area
 
         signal = total_flux - total_back
+        err = np.sqrt(signal) / np.sqrt(ap.area)
 
         snr = signal / np.sqrt(signal + ap.area*(np.std(back_values))**2)
 
-        return signal, snr
+        return signal, snr, err
 
     def get_mag_zero(self, data, xy_mag_table, idx=1):
-        mags = []
-        zeros = []
+        inst_mags = []
+        offsets = []
+        errs = []
         for source in xy_mag_table:
-            inst_flux = self.flux_from_aperture_annulus(data, (source["x"], source["y"]))[0]
+            inst_flux, _, err = self.flux_from_aperture_annulus(data, (source["x"], source["y"]))
 
             inst_mag = -2.5 * np.log10(inst_flux)
-            zero = inst_mag - source["mag"]
+            inst_mag_err = (1 / (err * np.log(10)))**2 * err**2
+            inst_offset = inst_mag - source["mag"]
 
-            mags.append(inst_mag)
-            zeros.append(zero)
+            inst_mags.append(inst_mag)
+            errs.append(inst_mag_err)
+            offsets.append(inst_offset)
 
-        med_zero = np.nanmedian(np.array(zeros))
+        offset = np.nanmedian(np.array(offsets))
+        offset_err = np.nanstd(offsets) / np.sqrt(len(offsets))
 
-        fig, ax = plt.subplots(figsize=(8,5))
+        phot_stars_mag(mags=inst_mags, errs=errs, offset=offset, offset_err=offset_err, xy_mag_table=xy_mag_table, name=idx)
 
-        ax.scatter([inst_mag - med_zero for inst_mag in mags],xy_mag_table["mag"],color="k")
-        plt.savefig(f"./12_411/figures/mag_zero_{idx}.pdf", dpi=300, bbox_inches="tight")
-        plt.close(fig)
-
-        return med_zero, np.nanstd(zeros)
+        return offset, np.nanstd(offsets) / np.sqrt(len(offsets))

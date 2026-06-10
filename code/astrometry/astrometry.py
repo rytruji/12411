@@ -392,10 +392,7 @@ class Astrometry():
             all_source_plot(self, self.plotdir, "culled_sources", all_sources=culled_sources)
 
         print("Attempting Movement Search...")
-        chains = movement_search(culled_sources, all_times, prediction_error, depth)
-        print(f"Done. The number of identified tracks was {len(chains)}.")
-
-        return(chains)
+        return movement_search(culled_sources, all_times, prediction_error, depth)
     
 
     def _resolve_coord(self, obs, i, jpl_id, coordinate, full_chains, tracker):
@@ -445,7 +442,7 @@ class Astrometry():
                                             depth=depth)
             if not full_chains:
                 print("Auto Tracking failed. Switching to manual linear tracking...")
-                tracker = linear_tracker(self.datadir, self.observations[0], self.observations[-1])
+                tracker = linear_tracker(self.datadir, self.midtime, self.observations[0], self.observations[-1])
                 
         
         # initialize empty positions
@@ -509,6 +506,7 @@ class Astrometry():
     def get_magnitudes(self, positions, transform, make_plots=False):
     
         mags = []
+        errs = []
 
         print("Requesting Catalog Stars from Gaia...")
         obs = self.observations[len(self.observations) // 2]
@@ -523,7 +521,7 @@ class Astrometry():
 
             radii, curve = obs.phot.get_best_radius(obs.data, highest_mag_coord)
 
-            zero, _ = obs.phot.get_mag_zero(obs.data, matches, idx=obs.name)
+            zero, zero_std = obs.phot.get_mag_zero(obs.data, matches, idx=obs.name)
 
             if make_plots:
                 xy_matches = [(x,y) for x,y in zip(matches["x"], matches["y"])]
@@ -533,13 +531,19 @@ class Astrometry():
 
             target_position_xy = obs.eq_to_px(positions[j])
 
-            target_flux = obs.phot.flux_from_aperture_annulus(obs.data, target_position_xy)[0]
+            target_flux, _, err = obs.phot.flux_from_aperture_annulus(obs.data, target_position_xy)
 
             inst_mag = -2.5 * np.log10(target_flux)
             stand_mag = inst_mag - zero
             mags.append(stand_mag)
+            errs.append(0)
 
-        return np.array(mags)
+        if make_plots:
+            midtimes = [self.midtime(obs.header) for _, obs in self.successful_observations()]
+            t0 = midtimes[0]
+            light_curve([(time - t0).to(u.hour).value for time in midtimes], mags, errs, self.plotdir)
+
+        return np.array(mags), np.array(errs)
 
 
     def to_mpc(self, positions, packed_desig, filter, obs_code, mags, mp_number="     ", discovery=False, note1=" ", note2=" ", write_out=True):

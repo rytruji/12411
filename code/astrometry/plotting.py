@@ -293,14 +293,16 @@ def position_plot(positions, residuals, outdir, name="position_plot"):
 
 
 def segmentation_plot(data, convolved_data, cat, segment_map, outdir, name="segmentation_plot"):
+    os.makedirs(os.path.join(outdir, "segmentations", "segmented").replace("\\","/"), exist_ok=True)
+    os.makedirs(os.path.join(outdir, "segmentations", "base").replace("\\","/"), exist_ok=True)
+    os.makedirs(os.path.join(outdir, "segmentations", "convolved").replace("\\","/"), exist_ok=True)
 
     fig, ax1 = plt.subplots(figsize=(5, 5))
 
     ax1.imshow(data, origin='upper', cmap='grey_r', norm=LogNorm(vmin=np.nanmin(data), vmax=np.nanmax(data)))
     ax1.set_title('Background-subtracted Data')
     
-    os.makedirs(os.path.join(outdir, "segmentations").replace("\\","/"), exist_ok=True)
-    plt.savefig(os.path.join(outdir, "segmentations", f"base_data_{name}.png").replace("\\","/"), dpi=300, bbox_inches="tight")
+    plt.savefig(os.path.join(outdir, "segmentations", "base", f"base_data_{name}.png").replace("\\","/"), dpi=300, bbox_inches="tight")
     plt.close(fig)
     
     fig, ax2 = plt.subplots(figsize=(5, 5))
@@ -311,7 +313,7 @@ def segmentation_plot(data, convolved_data, cat, segment_map, outdir, name="segm
 
     cat.plot_kron_apertures(ax=ax2, color='white', lw=0.5, alpha=0.5)
 
-    plt.savefig(os.path.join(outdir, "segmentations", f"segmentation_{name}.png").replace("\\","/"), dpi=300, bbox_inches="tight")
+    plt.savefig(os.path.join(outdir, "segmentations", "segmented", f"segmentation_{name}.png").replace("\\","/"), dpi=300, bbox_inches="tight")
     plt.close(fig)
 
     fig, ax3 = plt.subplots(figsize=(5, 5))
@@ -319,8 +321,7 @@ def segmentation_plot(data, convolved_data, cat, segment_map, outdir, name="segm
     ax3.imshow(convolved_data, origin='upper', cmap='grey_r')
     ax3.set_title('Gaussian-Convolved Data')
     
-    os.makedirs(os.path.join(outdir, "segmentations").replace("\\","/"), exist_ok=True)
-    plt.savefig(os.path.join(outdir, "segmentations", f"convolved_{name}.png").replace("\\","/"), dpi=300, bbox_inches="tight")
+    plt.savefig(os.path.join(outdir, "segmentations", "convolved", f"convolved_{name}.png").replace("\\","/"), dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -337,4 +338,38 @@ def curve_of_growth(radii, curve, best_rad, outdir, name="curve_of_growth"):
 
     os.makedirs(os.path.join(outdir, "curves_of_growth").replace("\\","/"), exist_ok=True)
     plt.savefig(os.path.join(outdir, "curves_of_growth", f"{name}.pdf").replace("\\","/"), dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def phot_stars_mag(mags, errs, offset, offset_err, xy_mag_table, name):
+    fig, ax = plt.subplots(figsize=(8,5))
+
+    ax.errorbar(xy_mag_table["mag"],[inst_mag - offset for inst_mag in mags],
+                yerr=[err + offset_err for err in errs],
+                capsize=3,
+                color="k",
+                ls=" ",
+                marker="o")
+    ax.set_ylabel("Measured Magnitude")
+    ax.set_xlabel("Gaia DR3 computed Magnitude")
+    plt.savefig(f"C:/Users/truji/Desktop/MIT_F25/12_411/figures/mag_zero_{name}.pdf", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def light_curve(midtimes, mags, errs, outdir):
+    fig, ax = plt.subplots(figsize=(8,5))
+
+    ax.errorbar(midtimes, mags,
+                yerr=errs,
+                capsize=3,
+                color="k",
+                ls=" ",
+                marker="o")
+
+    plt.xlabel("Exposure Midtime")
+    plt.ylabel("Target Magnitude")
+    plt.title(f"Light Curve")
+
+    os.makedirs(os.path.join(outdir, "light_curves").replace("\\","/"), exist_ok=True)
+    plt.savefig(os.path.join(outdir, "light_curves", f"Target_Light_Curve.pdf").replace("\\","/"), dpi=300, bbox_inches="tight")
     plt.close(fig)

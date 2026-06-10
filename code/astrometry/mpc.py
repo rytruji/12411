@@ -73,3 +73,11 @@ def eighty_column(packed_desig, # cols 6-12 (7)
     assert len(out) == 80, len(out)
 
     return out
+
+
+def ades_psv():
+    pass
+
+
+def ades_xml():
+    pass
